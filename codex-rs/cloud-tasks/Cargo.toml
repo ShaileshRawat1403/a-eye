@@ -20,7 +20,7 @@ codex-cloud-tasks-client = { path = "../cloud-tasks-client", features = [
     "mock",
     "online",
 ] }
-codex-common = { path = "../common", features = ["cli"] }
+codex-common = { package = "aeye-common", path = "../common", features = ["cli"] }
 codex-core = { path = "../core" }
 codex-login = { path = "../login" }
 codex-tui = { path = "../tui" }

@@ -15,6 +15,14 @@ pub static CODEX_ALIASES_TEMP_DIR: TempDir = unsafe {
 
 #[cfg(not(target_os = "windows"))]
 mod abort_tasks;
+mod aeye_apply;
+mod aeye_explain;
+mod aeye_learn;
+mod aeye_patch;
+mod aeye_plan;
+mod aeye_run;
+mod aeye_scan;
+mod aeye_verify;
 mod agent_websocket;
 mod apply_patch_cli;
 #[cfg(not(target_os = "windows"))]

@@ -30,7 +30,7 @@ fn run_live(prompt: &str) -> (assert_cmd::assert::Assert, TempDir) {
     // implementation). Instead we configure the std `Command` ourselves, then later hand the
     // resulting `Output` to `assert_cmd` for the familiar assertions.
 
-    let mut cmd = Command::new(codex_utils_cargo_bin::cargo_bin("codex-rs").unwrap());
+    let mut cmd = Command::new(codex_utils_cargo_bin::cargo_bin("codex").unwrap());
     cmd.current_dir(dir.path());
     cmd.env("OPENAI_API_KEY", require_api_key());
 
@@ -145,4 +145,25 @@ fn live_print_working_directory() {
     assert
         .success()
         .stdout(predicate::str::contains(dir.path().to_string_lossy()));
+}
+
+#[test]
+fn aeye_status_smoke_test() {
+    let dir = TempDir::new().unwrap();
+    let mut cmd = Command::new(codex_utils_cargo_bin::cargo_bin("a-eye").unwrap());
+    cmd.current_dir(dir.path());
+
+    cmd.arg("status");
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("A-Eye Status:"))
+        .stdout(predicate::str::contains(
+            "Tier: 1 (Default - Plan & Diff only)",
+        ))
+        .stdout(predicate::str::contains("Policy Mode: Safe"))
+        .stdout(predicate::str::contains("Last Run ID: N/A (no runs yet)"))
+        .stdout(predicate::str::contains(
+            "System Profile: Not found (.nlpg/system.json)",
+        ));
 }

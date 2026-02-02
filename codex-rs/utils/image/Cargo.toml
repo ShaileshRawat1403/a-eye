@@ -1,5 +1,5 @@
 [package]
-name = "codex-utils-image"
+name = "aeye-utils-image"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

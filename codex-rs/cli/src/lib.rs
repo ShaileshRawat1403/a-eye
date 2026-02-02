@@ -1,6 +1,11 @@
+pub mod aeye;
 pub mod debug_sandbox;
 mod exit_status;
 pub mod login;
+mod mcp_cmd;
+pub mod multitool;
+#[cfg(not(windows))]
+mod wsl_paths;
 
 use clap::Parser;
 use codex_common::CliConfigOverrides;

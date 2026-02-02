@@ -187,6 +187,155 @@ dependencies = [
 ]
 
 [[package]]
+name = "aeye-arg0"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "codex-apply-patch",
+ "codex-core",
+ "codex-linux-sandbox",
+ "dotenvy",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "aeye-common"
+version = "0.0.0"
+dependencies = [
+ "aeye-protocol",
+ "aeye-utils-absolute-path",
+ "clap",
+ "codex-core",
+ "codex-lmstudio",
+ "codex-ollama",
+ "pretty_assertions",
+ "serde",
+ "toml 0.9.5",
+]
+
+[[package]]
+name = "aeye-protocol"
+version = "0.0.0"
+dependencies = [
+ "aeye-utils-absolute-path",
+ "aeye-utils-image",
+ "anyhow",
+ "codex-execpolicy",
+ "codex-git",
+ "icu_decimal",
+ "icu_locale_core",
+ "icu_provider",
+ "mcp-types",
+ "mime_guess",
+ "pretty_assertions",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "strum 0.27.2",
+ "strum_macros 0.27.2",
+ "sys-locale",
+ "tempfile",
+ "tracing",
+ "ts-rs",
+ "uuid",
+]
+
+[[package]]
+name = "aeye-utils-absolute-path"
+version = "0.0.0"
+dependencies = [
+ "dirs",
+ "path-absolutize",
+ "pretty_assertions",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "ts-rs",
+]
+
+[[package]]
+name = "aeye-utils-cache"
+version = "0.0.0"
+dependencies = [
+ "lru 0.16.3",
+ "sha1",
+ "tokio",
+]
+
+[[package]]
+name = "aeye-utils-cargo-bin"
+version = "0.0.0"
+dependencies = [
+ "assert_cmd",
+ "runfiles",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "aeye-utils-home-dir"
+version = "0.0.0"
+dependencies = [
+ "dirs",
+ "pretty_assertions",
+ "tempfile",
+]
+
+[[package]]
+name = "aeye-utils-image"
+version = "0.0.0"
+dependencies = [
+ "aeye-utils-cache",
+ "base64",
+ "image",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tokio",
+]
+
+[[package]]
+name = "aeye-utils-json-to-toml"
+version = "0.0.0"
+dependencies = [
+ "pretty_assertions",
+ "serde_json",
+ "toml 0.9.5",
+]
+
+[[package]]
+name = "aeye-utils-pty"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "filedescriptor",
+ "lazy_static",
+ "libc",
+ "log",
+ "portable-pty",
+ "pretty_assertions",
+ "shared_library",
+ "tokio",
+ "winapi",
+]
+
+[[package]]
+name = "aeye-utils-readiness"
+version = "0.0.0"
+dependencies = [
+ "assert_matches",
+ "async-trait",
+ "thiserror 2.0.17",
+ "time",
+ "tokio",
+]
+
+[[package]]
+name = "aeye-utils-string"
+version = "0.0.0"
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -329,13 +478,13 @@ checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 name = "app_test_support"
 version = "0.0.0"
 dependencies = [
+ "aeye-protocol",
+ "aeye-utils-cargo-bin",
  "anyhow",
  "base64",
  "chrono",
  "codex-app-server-protocol",
  "codex-core",
- "codex-protocol",
- "codex-utils-cargo-bin",
  "core_test_support",
  "serde",
  "serde_json",
@@ -1050,12 +1199,12 @@ dependencies = [
 name = "codex-api"
 version = "0.0.0"
 dependencies = [
+ "aeye-protocol",
  "anyhow",
  "assert_matches",
  "async-trait",
  "bytes",
  "codex-client",
- "codex-protocol",
  "eventsource-stream",
  "futures",
  "http 1.3.1",
@@ -1078,6 +1227,11 @@ dependencies = [
 name = "codex-app-server"
 version = "0.0.0"
 dependencies = [
+ "aeye-arg0",
+ "aeye-common",
+ "aeye-protocol",
+ "aeye-utils-absolute-path",
+ "aeye-utils-json-to-toml",
  "anyhow",
  "app_test_support",
  "async-trait",
@@ -1085,20 +1239,15 @@ dependencies = [
  "base64",
  "chrono",
  "codex-app-server-protocol",
- "codex-arg0",
  "codex-backend-client",
  "codex-chatgpt",
  "codex-cloud-requirements",
- "codex-common",
  "codex-core",
  "codex-execpolicy",
  "codex-feedback",
  "codex-file-search",
  "codex-login",
- "codex-protocol",
  "codex-rmcp-client",
- "codex-utils-absolute-path",
- "codex-utils-json-to-toml",
  "core_test_support",
  "mcp-types",
  "os_info",
@@ -1122,11 +1271,11 @@ dependencies = [
 name = "codex-app-server-protocol"
 version = "0.0.0"
 dependencies = [
+ "aeye-protocol",
+ "aeye-utils-absolute-path",
+ "aeye-utils-cargo-bin",
  "anyhow",
  "clap",
- "codex-protocol",
- "codex-utils-absolute-path",
- "codex-utils-cargo-bin",
  "mcp-types",
  "pretty_assertions",
  "schemars 0.8.22",
@@ -1144,10 +1293,10 @@ dependencies = [
 name = "codex-app-server-test-client"
 version = "0.0.0"
 dependencies = [
+ "aeye-protocol",
  "anyhow",
  "clap",
  "codex-app-server-protocol",
- "codex-protocol",
  "serde",
  "serde_json",
  "uuid",
@@ -1157,29 +1306,16 @@ dependencies = [
 name = "codex-apply-patch"
 version = "0.0.0"
 dependencies = [
+ "aeye-utils-cargo-bin",
  "anyhow",
  "assert_cmd",
  "assert_matches",
- "codex-utils-cargo-bin",
  "pretty_assertions",
  "similar",
  "tempfile",
  "thiserror 2.0.17",
  "tree-sitter",
  "tree-sitter-bash",
-]
-
-[[package]]
-name = "codex-arg0"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "codex-apply-patch",
- "codex-core",
- "codex-linux-sandbox",
- "dotenvy",
- "tempfile",
- "tokio",
 ]
 
 [[package]]
@@ -1196,10 +1332,10 @@ dependencies = [
 name = "codex-backend-client"
 version = "0.0.0"
 dependencies = [
+ "aeye-protocol",
  "anyhow",
  "codex-backend-openapi-models",
  "codex-core",
- "codex-protocol",
  "pretty_assertions",
  "reqwest",
  "serde",
@@ -1219,12 +1355,12 @@ dependencies = [
 name = "codex-chatgpt"
 version = "0.0.0"
 dependencies = [
+ "aeye-common",
+ "aeye-utils-cargo-bin",
  "anyhow",
  "clap",
- "codex-common",
  "codex-core",
  "codex-git",
- "codex-utils-cargo-bin",
  "pretty_assertions",
  "serde",
  "serde_json",
@@ -1237,40 +1373,47 @@ dependencies = [
 name = "codex-cli"
 version = "0.0.0"
 dependencies = [
+ "aeye-arg0",
+ "aeye-common",
+ "aeye-protocol",
+ "aeye-utils-cargo-bin",
  "anyhow",
  "assert_cmd",
  "assert_matches",
+ "chrono",
  "clap",
  "clap_complete",
  "codex-app-server",
  "codex-app-server-protocol",
- "codex-arg0",
  "codex-chatgpt",
  "codex-cloud-tasks",
- "codex-common",
  "codex-core",
  "codex-exec",
  "codex-execpolicy",
  "codex-login",
  "codex-mcp-server",
- "codex-protocol",
  "codex-responses-api-proxy",
  "codex-rmcp-client",
  "codex-stdio-to-uds",
  "codex-tui",
- "codex-utils-cargo-bin",
  "codex-windows-sandbox",
+ "globset",
  "libc",
  "owo-colors",
  "predicates",
  "pretty_assertions",
+ "rand 0.9.2",
  "regex-lite",
+ "serde",
  "serde_json",
+ "serde_yaml",
  "supports-color 3.0.2",
  "tempfile",
  "tokio",
  "toml 0.9.5",
  "tracing",
+ "uuid",
+ "walkdir",
 ]
 
 [[package]]
@@ -1300,12 +1443,12 @@ dependencies = [
 name = "codex-cloud-requirements"
 version = "0.0.0"
 dependencies = [
+ "aeye-protocol",
  "async-trait",
  "base64",
  "codex-backend-client",
  "codex-core",
  "codex-otel",
- "codex-protocol",
  "pretty_assertions",
  "serde_json",
  "tempfile",
@@ -1318,13 +1461,13 @@ dependencies = [
 name = "codex-cloud-tasks"
 version = "0.0.0"
 dependencies = [
+ "aeye-common",
  "anyhow",
  "async-trait",
  "base64",
  "chrono",
  "clap",
  "codex-cloud-tasks-client",
- "codex-common",
  "codex-core",
  "codex-login",
  "codex-tui",
@@ -1359,24 +1502,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "codex-common"
-version = "0.0.0"
-dependencies = [
- "clap",
- "codex-core",
- "codex-lmstudio",
- "codex-ollama",
- "codex-protocol",
- "codex-utils-absolute-path",
- "pretty_assertions",
- "serde",
- "toml 0.9.5",
-]
-
-[[package]]
 name = "codex-core"
 version = "0.0.0"
 dependencies = [
+ "aeye-arg0",
+ "aeye-protocol",
+ "aeye-utils-absolute-path",
+ "aeye-utils-cargo-bin",
+ "aeye-utils-home-dir",
+ "aeye-utils-pty",
+ "aeye-utils-readiness",
+ "aeye-utils-string",
  "anyhow",
  "arc-swap",
  "assert_cmd",
@@ -1390,7 +1526,6 @@ dependencies = [
  "codex-api",
  "codex-app-server-protocol",
  "codex-apply-patch",
- "codex-arg0",
  "codex-async-utils",
  "codex-client",
  "codex-core",
@@ -1399,15 +1534,8 @@ dependencies = [
  "codex-git",
  "codex-keyring-store",
  "codex-otel",
- "codex-protocol",
  "codex-rmcp-client",
  "codex-state",
- "codex-utils-absolute-path",
- "codex-utils-cargo-bin",
- "codex-utils-home-dir",
- "codex-utils-pty",
- "codex-utils-readiness",
- "codex-utils-string",
  "codex-windows-sandbox",
  "core-foundation 0.9.4",
  "core_test_support",
@@ -1489,16 +1617,16 @@ dependencies = [
 name = "codex-exec"
 version = "0.0.0"
 dependencies = [
+ "aeye-arg0",
+ "aeye-common",
+ "aeye-protocol",
+ "aeye-utils-absolute-path",
+ "aeye-utils-cargo-bin",
  "anyhow",
  "assert_cmd",
  "clap",
- "codex-arg0",
  "codex-cloud-requirements",
- "codex-common",
  "codex-core",
- "codex-protocol",
- "codex-utils-absolute-path",
- "codex-utils-cargo-bin",
  "core_test_support",
  "libc",
  "mcp-types",
@@ -1523,12 +1651,12 @@ dependencies = [
 name = "codex-exec-server"
 version = "0.0.0"
 dependencies = [
+ "aeye-utils-cargo-bin",
  "anyhow",
  "async-trait",
  "clap",
  "codex-core",
  "codex-execpolicy",
- "codex-utils-cargo-bin",
  "exec_server_test_support",
  "libc",
  "maplit",
@@ -1586,8 +1714,8 @@ dependencies = [
 name = "codex-feedback"
 version = "0.0.0"
 dependencies = [
+ "aeye-protocol",
  "anyhow",
- "codex-protocol",
  "pretty_assertions",
  "sentry",
  "tracing",
@@ -1638,9 +1766,9 @@ dependencies = [
 name = "codex-linux-sandbox"
 version = "0.0.0"
 dependencies = [
+ "aeye-utils-absolute-path",
  "clap",
  "codex-core",
- "codex-utils-absolute-path",
  "landlock",
  "libc",
  "pretty_assertions",
@@ -1690,12 +1818,12 @@ dependencies = [
 name = "codex-mcp-server"
 version = "0.0.0"
 dependencies = [
+ "aeye-arg0",
+ "aeye-common",
+ "aeye-protocol",
+ "aeye-utils-json-to-toml",
  "anyhow",
- "codex-arg0",
- "codex-common",
  "codex-core",
- "codex-protocol",
- "codex-utils-json-to-toml",
  "core_test_support",
  "mcp-types",
  "mcp_test_support",
@@ -1716,12 +1844,12 @@ dependencies = [
 name = "codex-network-proxy"
 version = "0.0.0"
 dependencies = [
+ "aeye-utils-absolute-path",
  "anyhow",
  "async-trait",
  "clap",
  "codex-app-server-protocol",
  "codex-core",
- "codex-utils-absolute-path",
  "globset",
  "pretty_assertions",
  "rama-core",
@@ -1764,11 +1892,11 @@ dependencies = [
 name = "codex-otel"
 version = "0.0.0"
 dependencies = [
+ "aeye-protocol",
+ "aeye-utils-absolute-path",
  "chrono",
  "codex-api",
  "codex-app-server-protocol",
- "codex-protocol",
- "codex-utils-absolute-path",
  "eventsource-stream",
  "http 1.3.1",
  "opentelemetry",
@@ -1798,34 +1926,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "codex-protocol"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "codex-execpolicy",
- "codex-git",
- "codex-utils-absolute-path",
- "codex-utils-image",
- "icu_decimal",
- "icu_locale_core",
- "icu_provider",
- "mcp-types",
- "mime_guess",
- "pretty_assertions",
- "schemars 0.8.22",
- "serde",
- "serde_json",
- "serde_with",
- "strum 0.27.2",
- "strum_macros 0.27.2",
- "sys-locale",
- "tempfile",
- "tracing",
- "ts-rs",
- "uuid",
-]
-
-[[package]]
 name = "codex-responses-api-proxy"
 version = "0.0.0"
 dependencies = [
@@ -1845,12 +1945,12 @@ dependencies = [
 name = "codex-rmcp-client"
 version = "0.0.0"
 dependencies = [
+ "aeye-protocol",
+ "aeye-utils-cargo-bin",
+ "aeye-utils-home-dir",
  "anyhow",
  "axum",
  "codex-keyring-store",
- "codex-protocol",
- "codex-utils-cargo-bin",
- "codex-utils-home-dir",
  "futures",
  "keyring",
  "mcp-types",
@@ -1876,11 +1976,11 @@ dependencies = [
 name = "codex-state"
 version = "0.0.0"
 dependencies = [
+ "aeye-protocol",
  "anyhow",
  "chrono",
  "clap",
  "codex-otel",
- "codex-protocol",
  "dirs",
  "owo-colors",
  "pretty_assertions",
@@ -1897,9 +1997,9 @@ dependencies = [
 name = "codex-stdio-to-uds"
 version = "0.0.0"
 dependencies = [
+ "aeye-utils-cargo-bin",
  "anyhow",
  "assert_cmd",
- "codex-utils-cargo-bin",
  "pretty_assertions",
  "tempfile",
  "uds_windows",
@@ -1909,6 +2009,12 @@ dependencies = [
 name = "codex-tui"
 version = "0.0.0"
 dependencies = [
+ "aeye-arg0",
+ "aeye-common",
+ "aeye-protocol",
+ "aeye-utils-absolute-path",
+ "aeye-utils-cargo-bin",
+ "aeye-utils-pty",
  "anyhow",
  "arboard",
  "assert_matches",
@@ -1917,22 +2023,16 @@ dependencies = [
  "clap",
  "codex-ansi-escape",
  "codex-app-server-protocol",
- "codex-arg0",
  "codex-backend-client",
  "codex-chatgpt",
  "codex-cli",
  "codex-cloud-requirements",
- "codex-common",
  "codex-core",
  "codex-feedback",
  "codex-file-search",
  "codex-login",
  "codex-otel",
- "codex-protocol",
  "codex-state",
- "codex-utils-absolute-path",
- "codex-utils-cargo-bin",
- "codex-utils-pty",
  "codex-windows-sandbox",
  "color-eyre",
  "crossterm",
@@ -1984,108 +2084,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "codex-utils-absolute-path"
-version = "0.0.0"
-dependencies = [
- "dirs",
- "path-absolutize",
- "pretty_assertions",
- "schemars 0.8.22",
- "serde",
- "serde_json",
- "tempfile",
- "ts-rs",
-]
-
-[[package]]
-name = "codex-utils-cache"
-version = "0.0.0"
-dependencies = [
- "lru 0.16.3",
- "sha1",
- "tokio",
-]
-
-[[package]]
-name = "codex-utils-cargo-bin"
-version = "0.0.0"
-dependencies = [
- "assert_cmd",
- "runfiles",
- "thiserror 2.0.17",
-]
-
-[[package]]
-name = "codex-utils-home-dir"
-version = "0.0.0"
-dependencies = [
- "dirs",
- "pretty_assertions",
- "tempfile",
-]
-
-[[package]]
-name = "codex-utils-image"
-version = "0.0.0"
-dependencies = [
- "base64",
- "codex-utils-cache",
- "image",
- "tempfile",
- "thiserror 2.0.17",
- "tokio",
-]
-
-[[package]]
-name = "codex-utils-json-to-toml"
-version = "0.0.0"
-dependencies = [
- "pretty_assertions",
- "serde_json",
- "toml 0.9.5",
-]
-
-[[package]]
-name = "codex-utils-pty"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "filedescriptor",
- "lazy_static",
- "libc",
- "log",
- "portable-pty",
- "pretty_assertions",
- "shared_library",
- "tokio",
- "winapi",
-]
-
-[[package]]
-name = "codex-utils-readiness"
-version = "0.0.0"
-dependencies = [
- "assert_matches",
- "async-trait",
- "thiserror 2.0.17",
- "time",
- "tokio",
-]
-
-[[package]]
-name = "codex-utils-string"
-version = "0.0.0"
-
-[[package]]
 name = "codex-windows-sandbox"
 version = "0.0.0"
 dependencies = [
+ "aeye-protocol",
+ "aeye-utils-absolute-path",
+ "aeye-utils-string",
  "anyhow",
  "base64",
  "chrono",
- "codex-protocol",
- "codex-utils-absolute-path",
- "codex-utils-string",
  "dirs-next",
  "dunce",
  "pretty_assertions",
@@ -2262,13 +2269,13 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 name = "core_test_support"
 version = "0.0.0"
 dependencies = [
+ "aeye-protocol",
+ "aeye-utils-absolute-path",
+ "aeye-utils-cargo-bin",
  "anyhow",
  "assert_cmd",
  "base64",
  "codex-core",
- "codex-protocol",
- "codex-utils-absolute-path",
- "codex-utils-cargo-bin",
  "futures",
  "notify",
  "pretty_assertions",
@@ -3077,9 +3084,9 @@ dependencies = [
 name = "exec_server_test_support"
 version = "0.0.0"
 dependencies = [
+ "aeye-utils-cargo-bin",
  "anyhow",
  "codex-core",
- "codex-utils-cargo-bin",
  "rmcp",
  "serde_json",
  "tokio",
@@ -4679,10 +4686,10 @@ dependencies = [
 name = "mcp_test_support"
 version = "0.0.0"
 dependencies = [
+ "aeye-utils-cargo-bin",
  "anyhow",
  "codex-core",
  "codex-mcp-server",
- "codex-utils-cargo-bin",
  "core_test_support",
  "mcp-types",
  "os_info",

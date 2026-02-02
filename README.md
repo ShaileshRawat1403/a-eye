@@ -1,59 +1,60 @@
-<p align="center"><code>npm i -g @openai/codex</code><br />or <code>brew install --cask codex</code></p>
-<p align="center"><strong>Codex CLI</strong> is a coding agent from OpenAI that runs locally on your computer.
+# A-Eye
+
 <p align="center">
-  <img src="https://github.com/openai/codex/blob/main/.github/codex-cli-splash.png" alt="Codex CLI splash" width="80%" />
+  <img src="docs/assets/a-eye-logo.svg" alt="A-Eye logo" width="340" />
 </p>
-</br>
-If you want Codex in your code editor (VS Code, Cursor, Windsurf), <a href="https://developers.openai.com/codex/ide">install in your IDE.</a>
-</br>If you are looking for the <em>cloud-based agent</em> from OpenAI, <strong>Codex Web</strong>, go to <a href="https://chatgpt.com/codex">chatgpt.com/codex</a>.</p>
 
----
+A-Eye is a CLI-first, intent-driven software development agent designed for non-developers.
 
-## Quickstart
+Core workflow:
 
-### Installing and running Codex CLI
+`Intent -> System Context -> Plan -> Explain -> Patch -> Verify -> Learn`
 
-Install globally with your preferred package manager:
+This repository is currently an A-Eye CLI fork used to build and validate A-Eye safely.
 
-```shell
-# Install using npm
-npm install -g @openai/codex
+## Current Status
+
+- A-Eye is available as a standalone CLI binary: `a-eye`.
+- Legacy compatibility path (`codex a-eye`) still works during migration.
+- Default mode is safe-first (Tier 1): planning and diff generation.
+- Supervised execution is gated (Tier 2+) with explicit approval prompts.
+- Structured artifacts are written under `.nlpg/runs/<run_id>/`.
+
+## Quickstart (current fork)
+
+From this repo:
+
+```bash
+cd codex-rs
+cargo run -- scan
+cargo run -- plan "describe your goal"
+cargo run -- patch --from .nlpg/runs/<run_id>/plan.json
+cargo run -- verify
 ```
 
-```shell
-# Install using Homebrew
-brew install --cask codex
+Install `a-eye` to your local Cargo bin path:
+
+```bash
+cd codex-rs
+cargo install --path cli --bin a-eye --locked
 ```
 
-Then simply run `codex` to get started.
+Then run:
 
-<details>
-<summary>You can also go to the <a href="https://github.com/openai/codex/releases/latest">latest GitHub Release</a> and download the appropriate binary for your platform.</summary>
+```bash
+a-eye scan
+a-eye plan "describe your goal"
+```
 
-Each GitHub Release contains many executables, but in practice, you likely want one of these:
+## Launch Focus
 
-- macOS
-  - Apple Silicon/arm64: `codex-aarch64-apple-darwin.tar.gz`
-  - x86_64 (older Mac hardware): `codex-x86_64-apple-darwin.tar.gz`
-- Linux
-  - x86_64: `codex-x86_64-unknown-linux-musl.tar.gz`
-  - arm64: `codex-aarch64-unknown-linux-musl.tar.gz`
+See the launch plan in `docs/a-eye-launch-plan.md`.
+For internal package/module rebrand sequencing, see `docs/a-eye-internal-rename-plan.md`.
 
-Each archive contains a single entry with the platform baked into the name (e.g., `codex-x86_64-unknown-linux-musl`), so you likely want to rename it to `codex` after extracting it.
+## Branding Direction
 
-</details>
+A-Eye now runs as a standalone binary (`a-eye`) while we continue internal extraction and cleanup.
 
-### Using Codex with your ChatGPT plan
+## License
 
-Run `codex` and select **Sign in with ChatGPT**. We recommend signing into your ChatGPT account to use Codex as part of your Plus, Pro, Team, Edu, or Enterprise plan. [Learn more about what's included in your ChatGPT plan](https://help.openai.com/en/articles/11369540-codex-in-chatgpt).
-
-You can also use Codex with an API key, but this requires [additional setup](https://developers.openai.com/codex/auth#sign-in-with-an-api-key).
-
-## Docs
-
-- [**Codex Documentation**](https://developers.openai.com/codex)
-- [**Contributing**](./docs/contributing.md)
-- [**Installing & building**](./docs/install.md)
-- [**Open source fund**](./docs/open-source-fund.md)
-
-This repository is licensed under the [Apache-2.0 License](LICENSE).
+Apache-2.0 (see `LICENSE`).

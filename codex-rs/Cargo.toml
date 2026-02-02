@@ -65,19 +65,33 @@ license = "Apache-2.0"
 [workspace.dependencies]
 # Internal
 app_test_support = { path = "app-server/tests/common" }
+aeye-arg0 = { path = "arg0" }
+aeye-cli = { package = "codex-cli", path = "cli" }
+aeye-common = { path = "common" }
+aeye-core = { package = "codex-core", path = "core" }
+aeye-protocol = { path = "protocol" }
+aeye-utils-absolute-path = { path = "utils/absolute-path" }
+aeye-utils-cache = { path = "utils/cache" }
+aeye-utils-cargo-bin = { path = "utils/cargo-bin" }
+aeye-utils-home-dir = { path = "utils/home-dir" }
+aeye-utils-image = { path = "utils/image" }
+aeye-utils-json-to-toml = { path = "utils/json-to-toml" }
+aeye-utils-pty = { path = "utils/pty" }
+aeye-utils-readiness = { path = "utils/readiness" }
+aeye-utils-string = { path = "utils/string" }
 codex-ansi-escape = { path = "ansi-escape" }
 codex-api = { path = "codex-api" }
 codex-app-server = { path = "app-server" }
 codex-app-server-protocol = { path = "app-server-protocol" }
 codex-apply-patch = { path = "apply-patch" }
-codex-arg0 = { path = "arg0" }
+codex-arg0 = { package = "aeye-arg0", path = "arg0" }
 codex-async-utils = { path = "async-utils" }
 codex-backend-client = { path = "backend-client" }
 codex-cloud-requirements = { path = "cloud-requirements" }
 codex-chatgpt = { path = "chatgpt" }
 codex-cli = { path = "cli"}
 codex-client = { path = "codex-client" }
-codex-common = { path = "common" }
+codex-common = { package = "aeye-common", path = "common" }
 codex-core = { path = "core" }
 codex-exec = { path = "exec" }
 codex-execpolicy = { path = "execpolicy" }
@@ -92,21 +106,21 @@ codex-mcp-server = { path = "mcp-server" }
 codex-ollama = { path = "ollama" }
 codex-otel = { path = "otel" }
 codex-process-hardening = { path = "process-hardening" }
-codex-protocol = { path = "protocol" }
+codex-protocol = { package = "aeye-protocol", path = "protocol" }
 codex-responses-api-proxy = { path = "responses-api-proxy" }
 codex-rmcp-client = { path = "rmcp-client" }
 codex-state = { path = "state" }
 codex-stdio-to-uds = { path = "stdio-to-uds" }
 codex-tui = { path = "tui" }
-codex-utils-absolute-path = { path = "utils/absolute-path" }
-codex-utils-cache = { path = "utils/cache" }
-codex-utils-cargo-bin = { path = "utils/cargo-bin" }
-codex-utils-image = { path = "utils/image" }
-codex-utils-json-to-toml = { path = "utils/json-to-toml" }
-codex-utils-home-dir = { path = "utils/home-dir" }
-codex-utils-pty = { path = "utils/pty" }
-codex-utils-readiness = { path = "utils/readiness" }
-codex-utils-string = { path = "utils/string" }
+codex-utils-absolute-path = { package = "aeye-utils-absolute-path", path = "utils/absolute-path" }
+codex-utils-cache = { package = "aeye-utils-cache", path = "utils/cache" }
+codex-utils-cargo-bin = { package = "aeye-utils-cargo-bin", path = "utils/cargo-bin" }
+codex-utils-home-dir = { package = "aeye-utils-home-dir", path = "utils/home-dir" }
+codex-utils-image = { package = "aeye-utils-image", path = "utils/image" }
+codex-utils-json-to-toml = { package = "aeye-utils-json-to-toml", path = "utils/json-to-toml" }
+codex-utils-pty = { package = "aeye-utils-pty", path = "utils/pty" }
+codex-utils-readiness = { package = "aeye-utils-readiness", path = "utils/readiness" }
+codex-utils-string = { package = "aeye-utils-string", path = "utils/string" }
 codex-windows-sandbox = { path = "windows-sandbox-rs" }
 core_test_support = { path = "core/tests/common" }
 exec_server_test_support = { path = "exec-server/tests/common" }

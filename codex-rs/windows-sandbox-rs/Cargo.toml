@@ -37,7 +37,7 @@ windows = { version = "0.58", features = [
 ] }
 
 [dependencies.codex-protocol]
-package = "codex-protocol"
+package = "aeye-protocol"
 path = "../protocol"
 
 [dependencies.rand]
