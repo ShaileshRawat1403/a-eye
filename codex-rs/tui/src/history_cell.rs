@@ -422,11 +422,7 @@ impl HistoryCell for UpdateAvailableHistoryCell {
         let update_instruction = if let Some(update_action) = self.update_action {
             line!["Run ", update_action.command_str().cyan(), " to update."]
         } else {
-            line![
-                "See ",
-                "https://github.com/openai/codex".cyan().underlined(),
-                " for installation options."
-            ]
+            line!["See the A-Eye install guide for update steps."]
         };
 
         let content = text![
@@ -438,10 +434,7 @@ impl HistoryCell for UpdateAvailableHistoryCell {
             ],
             update_instruction,
             "",
-            "See full release notes:",
-            "https://github.com/openai/codex/releases/latest"
-                .cyan()
-                .underlined(),
+            "See release notes in your A-Eye project repository.",
         ];
 
         let inner_width = content
@@ -968,7 +961,7 @@ pub(crate) fn new_session_info(
             Line::from(vec![
                 "  ".into(),
                 "/init".into(),
-                " - create an AGENTS.md file with instructions for Codex".dim(),
+                " - create an AGENTS.md file with instructions for A-Eye".dim(),
             ]),
             Line::from(vec![
                 "  ".into(),
@@ -978,7 +971,7 @@ pub(crate) fn new_session_info(
             Line::from(vec![
                 "  ".into(),
                 "/permissions".into(),
-                " - choose what Codex is allowed to do".dim(),
+                " - choose what A-Eye is allowed to do".dim(),
             ]),
             Line::from(vec![
                 "  ".into(),
@@ -1112,10 +1105,10 @@ impl HistoryCell for SessionHeaderHistoryCell {
 
         let make_row = |spans: Vec<Span<'static>>| Line::from(spans);
 
-        // Title line rendered inside the box: ">_ OpenAI Codex (vX)"
+        // Title line rendered inside the box: ">_ A-Eye (vX)"
         let title_spans: Vec<Span<'static>> = vec![
             Span::from(">_ ").dim(),
-            Span::from("OpenAI Codex").bold(),
+            Span::from("A-Eye").bold(),
             Span::from(" ").dim(),
             Span::from(format!("(v{})", self.version)).dim(),
         ];

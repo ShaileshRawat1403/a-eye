@@ -26,7 +26,7 @@ From this repo:
 
 ```bash
 cd codex-rs
-cargo run -- scan
+cargo run -- setup
 cargo run -- plan "describe your goal"
 cargo run -- patch --from .nlpg/runs/<run_id>/plan.json
 cargo run -- verify
@@ -39,10 +39,17 @@ cd codex-rs
 cargo install --path cli --bin a-eye --locked
 ```
 
+Or from repo root with presets:
+
+```bash
+just dev-fast    # faster local iteration build
+just release-max # maximum release optimization
+```
+
 Then run:
 
 ```bash
-a-eye scan
+a-eye setup
 a-eye plan "describe your goal"
 ```
 

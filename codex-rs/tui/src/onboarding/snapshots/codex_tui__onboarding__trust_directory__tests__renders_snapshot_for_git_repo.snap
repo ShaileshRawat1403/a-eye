@@ -2,13 +2,14 @@
 source: tui/src/onboarding/trust_directory.rs
 expression: terminal.backend()
 ---
-> You are running Codex in /workspace/project
+▣ Folder safety
 
-  Since this folder is version controlled, you may wish to allow Codex
-  to work in this folder without asking for approval.
+> A-Eye is running in /workspace/project
 
-› 1. Yes, allow Codex to work in this folder without asking for       
-     approval                                                         
-  2. No, ask me to approve edits and commands
+  Recommended for most users: ask before edits and commands. You can
+  switch to a faster mode later.
 
-  Press enter to continue
+  1. Ask before edits and commands (recommended)
+› 2. Allow faster changes in this folder                              
+
+  Press enter to save this folder safety choice

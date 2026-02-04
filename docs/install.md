@@ -21,6 +21,13 @@ cargo install --path cli --bin a-eye --locked
 
 This installs `a-eye` into `~/.cargo/bin` (or your configured Cargo bin dir).
 
+From repo root, you can also use build presets:
+
+```bash
+just dev-fast    # faster compile for iteration (less optimized)
+just release-max # slower compile, maximum optimization
+```
+
 ### Build from source
 
 ```bash

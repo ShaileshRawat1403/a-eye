@@ -131,6 +131,8 @@ const PLAN_IMPLEMENTATION_TITLE: &str = "Implement this plan?";
 const PLAN_IMPLEMENTATION_YES: &str = "Yes, implement this plan";
 const PLAN_IMPLEMENTATION_NO: &str = "No, stay in Plan mode";
 const PLAN_IMPLEMENTATION_CODING_MESSAGE: &str = "Implement the plan.";
+const GUIDE_PLAN_FIRST_PROMPT: &str = "Help me with this project. First, build a short, deterministic plan and wait for my approval before editing files.";
+const SYNTAX_EXPLAINER_DEFAULT_TARGET: &str = "the code relevant to my current task";
 
 use crate::app_event::AppEvent;
 use crate::app_event::ConnectorsSnapshot;
@@ -192,6 +194,20 @@ use self::agent::spawn_agent_from_existing;
 pub(crate) use self::agent::spawn_op_forwarder;
 mod session_header;
 use self::session_header::SessionHeader;
+mod home_panel;
+use self::home_panel::HomePanel;
+use self::home_panel::HomePanelContext;
+use self::home_panel::HomePanelInsights;
+use self::home_panel::HomePanelIntent;
+use self::home_panel::HomePanelScreen;
+use self::home_panel::HomePanelState;
+mod status_rail;
+use self::status_rail::StatusRail;
+use self::status_rail::StatusRailSample;
+use self::status_rail::StatusRailTracker;
+mod system_stats;
+use self::system_stats::SystemStatsSnapshot;
+use self::system_stats::sample_system_stats;
 mod skills;
 use self::skills::collect_tool_mentions;
 use self::skills::find_app_mentions;
@@ -241,6 +257,43 @@ impl UnifiedExecWaitState {
 
     fn is_duplicate(&self, command_display: &str) -> bool {
         self.command_display == command_display
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct TokenThroughputTracker {
+    previous_sample: Option<(Instant, i64)>,
+    smoothed_tokens_per_second: Option<f32>,
+}
+
+impl TokenThroughputTracker {
+    fn observe_total_output_tokens(&mut self, total_output_tokens: i64) {
+        let now = Instant::now();
+        if let Some((previous_at, previous_total)) = self.previous_sample {
+            let elapsed = now.saturating_duration_since(previous_at);
+            let delta_tokens = total_output_tokens - previous_total;
+            if elapsed.as_secs_f32() > 0.0 && delta_tokens >= 0 {
+                let sample = delta_tokens as f32 / elapsed.as_secs_f32();
+                if sample.is_finite() {
+                    self.smoothed_tokens_per_second = Some(match self.smoothed_tokens_per_second {
+                        Some(existing) => existing * 0.7 + sample * 0.3,
+                        None => sample,
+                    });
+                }
+            } else if delta_tokens < 0 {
+                self.smoothed_tokens_per_second = None;
+            }
+        }
+        self.previous_sample = Some((now, total_output_tokens));
+    }
+
+    fn tokens_per_second(&self) -> Option<f32> {
+        self.smoothed_tokens_per_second
+    }
+
+    fn clear(&mut self) {
+        self.previous_sample = None;
+        self.smoothed_tokens_per_second = None;
     }
 }
 
@@ -479,6 +532,8 @@ pub(crate) struct ChatWidget {
     session_header: SessionHeader,
     initial_user_message: Option<UserMessage>,
     token_info: Option<TokenUsageInfo>,
+    token_throughput_tracker: TokenThroughputTracker,
+    status_rail_tracker: std::cell::RefCell<StatusRailTracker>,
     rate_limit_snapshot: Option<RateLimitSnapshotDisplay>,
     plan_type: Option<PlanType>,
     rate_limit_warnings: RateLimitWarningState,
@@ -524,6 +579,12 @@ pub(crate) struct ChatWidget {
     frame_requester: FrameRequester,
     // Whether to include the initial welcome banner on session configured
     show_welcome_banner: bool,
+    // State for the non-dev guided home panel.
+    home_panel_state: HomePanelState,
+    // Set to true when the user dismisses the home panel without sending a turn.
+    home_panel_dismissed: bool,
+    // True once the user has sent at least one turn in this session.
+    has_user_submitted_turn: bool,
     // When resuming an existing session (selected via resume picker), avoid an
     // immediate redraw on SessionConfigured to prevent a gratuitous UI flicker.
     suppress_session_configured_redraw: bool,
@@ -819,8 +880,13 @@ impl ChatWidget {
         self.apply_session_info_cell(session_info_cell);
 
         if let Some(messages) = initial_messages {
+            if !messages.is_empty() {
+                self.has_user_submitted_turn = true;
+            }
             self.replay_initial_messages(messages);
         }
+        self.home_panel_state = HomePanelState::new();
+        self.home_panel_dismissed = false;
         // Ask codex-core to enumerate custom prompts for this session.
         self.submit_op(Op::ListCustomPrompts);
         self.submit_op(Op::ListSkills {
@@ -1157,6 +1223,7 @@ impl ChatWidget {
             None => {
                 self.bottom_pane.set_context_window(None, None);
                 self.token_info = None;
+                self.token_throughput_tracker.clear();
             }
         }
     }
@@ -1165,6 +1232,8 @@ impl ChatWidget {
         let percent = self.context_remaining_percent(&info);
         let used_tokens = self.context_used_tokens(&info, percent.is_some());
         self.bottom_pane.set_context_window(percent, used_tokens);
+        self.token_throughput_tracker
+            .observe_total_output_tokens(info.total_token_usage.output_tokens);
         self.token_info = Some(info);
     }
 
@@ -1190,9 +1259,41 @@ impl ChatWidget {
                 None => {
                     self.bottom_pane.set_context_window(None, None);
                     self.token_info = None;
+                    self.token_throughput_tracker.clear();
                 }
             }
         }
+    }
+
+    fn home_panel_insights(&self) -> HomePanelInsights {
+        let token_info = self.token_info.as_ref();
+        HomePanelInsights {
+            tokens_per_second: self.token_throughput_tracker.tokens_per_second(),
+            total_tokens: token_info.map(|info| info.total_token_usage.total_tokens),
+            output_tokens: token_info.map(|info| info.total_token_usage.output_tokens),
+            context_remaining_percent: token_info.and_then(|info| {
+                info.model_context_window.map(|window| {
+                    info.last_token_usage
+                        .percent_of_context_window_remaining(window)
+                })
+            }),
+        }
+    }
+
+    fn status_rail_view(
+        &self,
+        system_stats: &SystemStatsSnapshot,
+        insights: &HomePanelInsights,
+    ) -> status_rail::StatusRailView {
+        self.status_rail_tracker
+            .borrow_mut()
+            .observe(StatusRailSample {
+                cpu_percent: system_stats.cpu_percent,
+                memory_percent: system_stats.memory_percent,
+                gpu_percent: system_stats.gpu_percent,
+                tokens_per_second: insights.tokens_per_second,
+                context_remaining_percent: insights.context_remaining_percent,
+            })
     }
 
     pub(crate) fn on_rate_limit_snapshot(&mut self, snapshot: Option<RateLimitSnapshot>) {
@@ -2253,6 +2354,8 @@ impl ChatWidget {
             session_header: SessionHeader::new(header_model),
             initial_user_message,
             token_info: None,
+            token_throughput_tracker: TokenThroughputTracker::default(),
+            status_rail_tracker: std::cell::RefCell::new(StatusRailTracker::default()),
             rate_limit_snapshot: None,
             plan_type: None,
             rate_limit_warnings: RateLimitWarningState::default(),
@@ -2279,6 +2382,9 @@ impl ChatWidget {
             forked_from: None,
             queued_user_messages: VecDeque::new(),
             show_welcome_banner: is_first_run,
+            home_panel_state: HomePanelState::new(),
+            home_panel_dismissed: false,
+            has_user_submitted_turn: false,
             suppress_session_configured_redraw: false,
             pending_notification: None,
             quit_shortcut_expires_at: None,
@@ -2398,6 +2504,8 @@ impl ChatWidget {
             session_header: SessionHeader::new(header_model),
             initial_user_message,
             token_info: None,
+            token_throughput_tracker: TokenThroughputTracker::default(),
+            status_rail_tracker: std::cell::RefCell::new(StatusRailTracker::default()),
             rate_limit_snapshot: None,
             plan_type: None,
             rate_limit_warnings: RateLimitWarningState::default(),
@@ -2428,6 +2536,9 @@ impl ChatWidget {
             plan_item_active: false,
             queued_user_messages: VecDeque::new(),
             show_welcome_banner: is_first_run,
+            home_panel_state: HomePanelState::new(),
+            home_panel_dismissed: false,
+            has_user_submitted_turn: false,
             suppress_session_configured_redraw: false,
             pending_notification: None,
             quit_shortcut_expires_at: None,
@@ -2532,6 +2643,8 @@ impl ChatWidget {
             session_header: SessionHeader::new(header_model),
             initial_user_message,
             token_info: None,
+            token_throughput_tracker: TokenThroughputTracker::default(),
+            status_rail_tracker: std::cell::RefCell::new(StatusRailTracker::default()),
             rate_limit_snapshot: None,
             plan_type: None,
             rate_limit_warnings: RateLimitWarningState::default(),
@@ -2558,6 +2671,9 @@ impl ChatWidget {
             forked_from: None,
             queued_user_messages: VecDeque::new(),
             show_welcome_banner: false,
+            home_panel_state: HomePanelState::new(),
+            home_panel_dismissed: false,
+            has_user_submitted_turn: false,
             suppress_session_configured_redraw: true,
             pending_notification: None,
             quit_shortcut_expires_at: None,
@@ -2600,6 +2716,10 @@ impl ChatWidget {
     }
 
     pub(crate) fn handle_key_event(&mut self, key_event: KeyEvent) {
+        if self.handle_home_panel_key_event(key_event) {
+            return;
+        }
+
         match key_event {
             KeyEvent {
                 code: KeyCode::Char(c),
@@ -2740,6 +2860,93 @@ impl ChatWidget {
         }
     }
 
+    fn handle_home_panel_key_event(&mut self, key_event: KeyEvent) -> bool {
+        if !self.should_render_home_panel() || key_event.kind != KeyEventKind::Press {
+            return false;
+        }
+        if !self.bottom_pane.composer_is_empty() {
+            self.home_panel_dismissed = true;
+            return false;
+        }
+
+        match self.home_panel_state.screen {
+            HomePanelScreen::Landing => match key_event.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.home_panel_state.move_up();
+                    self.request_redraw();
+                    true
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.home_panel_state.move_down();
+                    self.request_redraw();
+                    true
+                }
+                KeyCode::Char(c) if c.is_ascii_digit() => {
+                    if let Some(number) = c.to_digit(10).map(|value| value as usize)
+                        && self.home_panel_state.select_option_by_number(number)
+                    {
+                        self.request_redraw();
+                        return true;
+                    }
+
+                    true
+                }
+                KeyCode::Enter => {
+                    self.home_panel_state.enter();
+                    self.request_redraw();
+                    true
+                }
+                KeyCode::Char('q') | KeyCode::Char('Q') => {
+                    self.request_quit_without_confirmation();
+                    true
+                }
+                // Let users instantly jump into normal composer flow.
+                _ => {
+                    self.home_panel_dismissed = true;
+                    false
+                }
+            },
+            HomePanelScreen::IntentForm => match key_event.code {
+                KeyCode::Esc | KeyCode::Left | KeyCode::Backspace => {
+                    self.home_panel_state.back();
+                    self.request_redraw();
+                    true
+                }
+                KeyCode::Enter => {
+                    self.home_panel_state.enter();
+                    self.request_redraw();
+                    true
+                }
+                _ => {
+                    self.home_panel_dismissed = true;
+                    false
+                }
+            },
+            HomePanelScreen::Journey => match key_event.code {
+                KeyCode::Left | KeyCode::Backspace | KeyCode::Esc => {
+                    self.home_panel_state.back();
+                    self.request_redraw();
+                    true
+                }
+                KeyCode::Char('?') => {
+                    self.home_panel_state.show_step_help = !self.home_panel_state.show_step_help;
+                    self.request_redraw();
+                    true
+                }
+                KeyCode::Enter => {
+                    self.home_panel_dismissed = true;
+                    self.open_guide_popup(Some(self.home_panel_state.selected_intent()));
+                    self.request_redraw();
+                    true
+                }
+                _ => {
+                    self.home_panel_dismissed = true;
+                    false
+                }
+            },
+        }
+    }
+
     pub(crate) fn attach_image(&mut self, path: PathBuf) {
         tracing::info!("attach_image path={path:?}");
         self.bottom_pane.attach_image(path);
@@ -2833,6 +3040,12 @@ impl ChatWidget {
             }
             SlashCommand::Model => {
                 self.open_model_popup();
+            }
+            SlashCommand::Guide => {
+                self.open_guide_popup(None);
+            }
+            SlashCommand::Explain => {
+                self.submit_syntax_explainer_turn(SYNTAX_EXPLAINER_DEFAULT_TARGET);
             }
             SlashCommand::Personality => {
                 self.open_personality_popup();
@@ -3057,7 +3270,25 @@ impl ChatWidget {
                     },
                 });
             }
+            SlashCommand::Explain if !trimmed.is_empty() => {
+                self.submit_syntax_explainer_turn(trimmed);
+            }
             _ => self.dispatch_command(cmd),
+        }
+    }
+
+    fn syntax_explainer_prompt(target: &str) -> String {
+        format!(
+            "Act as A-Eye's Syntax Explainer for non-developers. Explain {target} in plain language without assuming prior coding knowledge.\n\nUse this structure:\n1) What it is\n2) How it works step by step\n3) Why it matters in this project\n4) Safe edits I can try (and what to avoid)\n5) Tiny glossary of any technical words\n\nDo not edit files; this turn is explanation-only."
+        )
+    }
+
+    fn submit_syntax_explainer_turn(&mut self, target: &str) {
+        let prompt = Self::syntax_explainer_prompt(target);
+        if let Some(mask) = collaboration_modes::plan_mask(self.models_manager.as_ref()) {
+            self.submit_user_message_with_mode(prompt, mask);
+        } else {
+            self.submit_user_message(prompt.into());
         }
     }
 
@@ -3187,6 +3418,7 @@ impl ChatWidget {
                 )));
                 return;
             }
+            self.has_user_submitted_turn = true;
             self.submit_op(Op::RunUserShellCommand {
                 command: cmd.to_string(),
             });
@@ -3263,6 +3495,7 @@ impl ChatWidget {
         self.codex_op_tx.send(op).unwrap_or_else(|e| {
             tracing::error!("failed to send message: {e}");
         });
+        self.has_user_submitted_turn = true;
 
         // Persist the text to cross-session message history.
         if !text.is_empty() {
@@ -3919,7 +4152,7 @@ impl ChatWidget {
         let mut header = ColumnRenderable::new();
         header.push(Line::from("Select Personality".bold()));
         header.push(Line::from(
-            "Choose a communication style for Codex. Disable in /experimental.".dim(),
+            "Choose how A-Eye communicates. Disable in /experimental.".dim(),
         ));
 
         self.bottom_pane.show_selection_view(SelectionViewParams {
@@ -4505,10 +4738,11 @@ impl ChatWidget {
             .filter_map(|spec| {
                 let name = spec.stage.experimental_menu_name()?;
                 let description = spec.stage.experimental_menu_description()?;
+                let (name, description) = Self::friendly_experimental_copy(name, description);
                 Some(ExperimentalFeatureItem {
                     feature: spec.id,
-                    name: name.to_string(),
-                    description: description.to_string(),
+                    name,
+                    description,
                     enabled: self.config.features.enabled(spec.id),
                 })
             })
@@ -4516,6 +4750,23 @@ impl ChatWidget {
 
         let view = ExperimentalFeaturesView::new(features, self.app_event_tx.clone());
         self.bottom_pane.show_view(Box::new(view));
+    }
+
+    fn friendly_experimental_copy(name: &str, description: &str) -> (String, String) {
+        let name = name.to_string();
+        let description = description
+            .replace("Codex", "A-Eye")
+            .replace("ChatGPT App", "connected app")
+            .replace("Install Apps via /apps command.", "Enable apps with /apps.")
+            .replace(
+                "Restart Codex after enabling.",
+                "Restart A-Eye after enabling.",
+            )
+            .replace(
+                "Enter submits immediately; Tab queues messages when a task is running.",
+                "Enter sends now; Tab stages a draft while work is running.",
+            );
+        (name, description)
     }
 
     fn approval_preset_actions(
@@ -4602,7 +4853,7 @@ impl ChatWidget {
         let mut header_children: Vec<Box<dyn Renderable>> = Vec::new();
         let title_line = Line::from("Enable full access?").bold();
         let info_line = Line::from(vec![
-            "When Codex runs with full access, it can edit any file on your computer and run commands with network, without your approval. "
+            "When A-Eye runs with full access, it can edit any file on your computer and run commands with network, without your approval. "
                 .into(),
             "Exercise caution when enabling full access. This significantly increases the risk of data loss, leaks, or unexpected behavior."
                 .fg(Color::Red),
@@ -5300,6 +5551,116 @@ impl ChatWidget {
         self.session_header.set_model(effective.model());
     }
 
+    fn approval_policy_label(policy: AskForApproval) -> &'static str {
+        match policy {
+            AskForApproval::UnlessTrusted => "untrusted",
+            AskForApproval::OnFailure => "on-failure",
+            AskForApproval::OnRequest => "on-request",
+            AskForApproval::Never => "never",
+        }
+    }
+
+    fn approval_policy_home_label(policy: AskForApproval) -> &'static str {
+        match policy {
+            AskForApproval::UnlessTrusted => "ask on risky actions",
+            AskForApproval::OnFailure => "ask only on failures",
+            AskForApproval::OnRequest => "agent decides when to ask",
+            AskForApproval::Never => "no approval prompts",
+        }
+    }
+
+    fn sandbox_policy_label(policy: &SandboxPolicy) -> &'static str {
+        match policy {
+            SandboxPolicy::DangerFullAccess => "danger-full-access",
+            SandboxPolicy::ReadOnly => "read-only",
+            SandboxPolicy::ExternalSandbox { network_access } => {
+                if network_access.is_enabled() {
+                    "external+net"
+                } else {
+                    "external-restricted"
+                }
+            }
+            SandboxPolicy::WorkspaceWrite { network_access, .. } => {
+                if *network_access {
+                    "workspace-write+net"
+                } else {
+                    "workspace-write"
+                }
+            }
+        }
+    }
+
+    fn sandbox_policy_home_label(policy: &SandboxPolicy) -> &'static str {
+        match policy {
+            SandboxPolicy::DangerFullAccess => "full system access",
+            SandboxPolicy::ReadOnly => "preview only (no file changes)",
+            SandboxPolicy::ExternalSandbox { network_access } => {
+                if network_access.is_enabled() {
+                    "external sandbox + network"
+                } else {
+                    "external sandbox"
+                }
+            }
+            SandboxPolicy::WorkspaceWrite { network_access, .. } => {
+                if *network_access {
+                    "workspace edits + network"
+                } else {
+                    "workspace edits"
+                }
+            }
+        }
+    }
+
+    fn safety_tier_label(&self) -> &'static str {
+        let approval = self.config.approval_policy.value();
+        let sandbox = self.config.sandbox_policy.get();
+        if matches!(sandbox, SandboxPolicy::ReadOnly) {
+            "Tier 1"
+        } else if matches!(approval, AskForApproval::UnlessTrusted)
+            && matches!(sandbox, SandboxPolicy::WorkspaceWrite { .. })
+        {
+            "Tier 2"
+        } else if matches!(approval, AskForApproval::OnRequest)
+            && matches!(sandbox, SandboxPolicy::WorkspaceWrite { .. })
+        {
+            "Tier 3"
+        } else {
+            "Custom"
+        }
+    }
+
+    fn safety_tier_home_label(&self) -> &'static str {
+        match self.safety_tier_label() {
+            "Tier 1" => "Tier 1 (Safe default)",
+            "Tier 2" => "Tier 2 (Guided apply)",
+            "Tier 3" => "Tier 3 (Supervised speed)",
+            _ => "Custom safety",
+        }
+    }
+
+    fn should_render_home_panel(&self) -> bool {
+        self.thread_id.is_some()
+            && self.active_cell.is_none()
+            && !self.bottom_pane.is_task_running()
+            && self.bottom_pane.no_modal_or_popup_active()
+            && !self.is_review_mode
+            && !self.home_panel_dismissed
+            && !self.has_user_submitted_turn
+    }
+
+    fn should_render_status_rail(&self) -> bool {
+        self.thread_id.is_some()
+    }
+
+    fn project_label(&self) -> String {
+        self.config
+            .cwd
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| self.config.cwd.display().to_string())
+    }
+
     fn model_display_name(&self) -> &str {
         let model = self.current_model();
         if model.is_empty() {
@@ -5552,7 +5913,7 @@ impl ChatWidget {
                 (
                     "Press Enter to view the install link.",
                     "Install link unavailable.",
-                    "Install this app in your browser, then reload Codex.",
+                    "Install this app in your browser, then reload A-Eye.",
                 )
             };
             if let Some(install_url) = connector.install_url.clone() {
@@ -5878,6 +6239,185 @@ impl ChatWidget {
         });
     }
 
+    pub(crate) fn open_guide_popup(&mut self, home_intent: Option<HomePanelIntent>) {
+        let plan_mask = collaboration_modes::plan_mask(self.models_manager.as_ref());
+        let intent_focus = home_intent
+            .map(HomePanelIntent::label)
+            .unwrap_or("General guidance");
+        let guide_subtitle = format!(
+            "Focus: {intent_focus} | Intent -> Context -> Plan -> Explain -> Patch -> Verify -> Learn | {} | {} / {}",
+            self.safety_tier_label(),
+            Self::approval_policy_label(self.config.approval_policy.value()),
+            Self::sandbox_policy_label(self.config.sandbox_policy.get())
+        );
+        let mut items: Vec<SelectionItem> = Vec::new();
+
+        let mut plan_first_item = SelectionItem {
+            name: "Start with a safe plan".to_string(),
+            description: Some(
+                "Draft a short plan first. No edits until you approve the approach.".to_string(),
+            ),
+            selected_description: Some(
+                "Creates a planning turn with plain-language steps and safety-first flow."
+                    .to_string(),
+            ),
+            dismiss_on_select: true,
+            ..Default::default()
+        };
+        if let Some(mask) = plan_mask.clone() {
+            plan_first_item.actions = vec![Box::new(move |tx| {
+                tx.send(AppEvent::SubmitUserMessageWithMode {
+                    text: GUIDE_PLAN_FIRST_PROMPT.to_string(),
+                    collaboration_mode: mask.clone(),
+                });
+            })];
+        } else {
+            plan_first_item.is_disabled = true;
+            plan_first_item.disabled_reason =
+                Some("Plan mode is unavailable for this model.".to_string());
+        }
+        items.push(plan_first_item);
+
+        let mut from_scratch_item = SelectionItem {
+            name: "Build a project from scratch".to_string(),
+            description: Some(
+                "Start from plain language requirements, then scaffold safely.".to_string(),
+            ),
+            selected_description: Some(
+                "Creates a deterministic greenfield plan with milestones and validation steps."
+                    .to_string(),
+            ),
+            dismiss_on_select: true,
+            ..Default::default()
+        };
+        if let Some(mask) = plan_mask.clone() {
+            from_scratch_item.actions = vec![Box::new(move |tx| {
+                tx.send(AppEvent::SubmitUserMessageWithMode {
+                    text: "I want to build a new project from scratch. First ask clarifying questions, then create a deterministic plan with milestones, file structure, and tests before editing any files.".to_string(),
+                    collaboration_mode: mask.clone(),
+                });
+            })];
+        } else {
+            from_scratch_item.is_disabled = true;
+            from_scratch_item.disabled_reason =
+                Some("Plan mode is unavailable for this model.".to_string());
+        }
+        items.push(from_scratch_item);
+
+        let mut explain_item = SelectionItem {
+            name: "Explain this project in plain language".to_string(),
+            description: Some("Get an architecture walkthrough without jargon.".to_string()),
+            selected_description: Some(
+                "Asks A-Eye to map key parts, dependencies, and where to change safely."
+                    .to_string(),
+            ),
+            dismiss_on_select: true,
+            ..Default::default()
+        };
+        if let Some(mask) = plan_mask.clone() {
+            explain_item.actions = vec![Box::new(move |tx| {
+                tx.send(AppEvent::SubmitUserMessageWithMode {
+                    text: "Explain this codebase in plain language. Show the key modules and where changes are safest. Keep it concise.".to_string(),
+                    collaboration_mode: mask.clone(),
+                });
+            })];
+        } else {
+            explain_item.is_disabled = true;
+            explain_item.disabled_reason =
+                Some("Plan mode is unavailable for this model.".to_string());
+        }
+        items.push(explain_item);
+
+        let mut fix_item = SelectionItem {
+            name: "Help me fix a bug safely".to_string(),
+            description: Some("Create a deterministic fix plan with tests first.".to_string()),
+            selected_description: Some(
+                "Starts in planning mode and asks for rollback-friendly patch steps.".to_string(),
+            ),
+            dismiss_on_select: true,
+            ..Default::default()
+        };
+        if let Some(mask) = plan_mask {
+            fix_item.actions = vec![Box::new(move |tx| {
+                tx.send(AppEvent::SubmitUserMessageWithMode {
+                    text: "Help me fix a bug. First ask clarifying questions, then propose a deterministic plan with tests before edits.".to_string(),
+                    collaboration_mode: mask.clone(),
+                });
+            })];
+        } else {
+            fix_item.is_disabled = true;
+            fix_item.disabled_reason = Some("Plan mode is unavailable for this model.".to_string());
+        }
+        items.push(fix_item);
+
+        items.push(SelectionItem {
+            name: "Review current local changes".to_string(),
+            description: Some("Runs a focused review of uncommitted git changes.".to_string()),
+            selected_description: Some(
+                "Use this before applying patches to catch bugs and regressions.".to_string(),
+            ),
+            actions: vec![Box::new(move |tx: &AppEventSender| {
+                tx.send(AppEvent::CodexOp(Op::Review {
+                    review_request: ReviewRequest {
+                        target: ReviewTarget::UncommittedChanges,
+                        user_facing_hint: None,
+                    },
+                }));
+            })],
+            dismiss_on_select: true,
+            ..Default::default()
+        });
+
+        items.push(SelectionItem {
+            name: "Adjust safety permissions".to_string(),
+            description: Some("Choose what A-Eye can run without asking.".to_string()),
+            selected_description: Some(
+                "Recommended for non-dev use: keep approvals strict while learning.".to_string(),
+            ),
+            actions: vec![Box::new(move |tx| {
+                tx.send(AppEvent::OpenPermissionsPopup);
+            })],
+            dismiss_on_select: true,
+            ..Default::default()
+        });
+
+        items.push(SelectionItem {
+            name: "Show starter command cheat sheet".to_string(),
+            description: Some("Displays beginner-friendly commands and next steps.".to_string()),
+            actions: vec![Box::new(move |tx| {
+                tx.send(AppEvent::InsertHistoryCell(Box::new(
+                    history_cell::new_info_event(
+                        "Starter commands: /guide, /explain, /model, /permissions, /review, /diff"
+                            .to_string(),
+                        Some(
+                            "Tip: begin with '/guide' then choose 'Start with a safe plan'."
+                                .to_string(),
+                        ),
+                    ),
+                )));
+            })],
+            dismiss_on_select: true,
+            ..Default::default()
+        });
+
+        let initial_selected_idx = home_intent.map(|intent| match intent {
+            HomePanelIntent::ImproveExisting => 0,
+            HomePanelIntent::BuildFromScratch => 1,
+            HomePanelIntent::UnderstandSystem => 2,
+            HomePanelIntent::FixError => 3,
+            HomePanelIntent::ExploreSafely => 5,
+        });
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some("A-Eye guided actions".into()),
+            subtitle: Some(guide_subtitle),
+            footer_hint: Some(standard_popup_hint_line()),
+            items,
+            initial_selected_idx,
+            ..Default::default()
+        });
+    }
+
     pub(crate) async fn show_review_branch_picker(&mut self, cwd: &Path) {
         let branches = local_git_branches(cwd).await;
         let current_branch = current_branch_name(cwd)
@@ -6041,8 +6581,46 @@ impl ChatWidget {
             Some(cell) => RenderableItem::Borrowed(cell).inset(Insets::tlbr(1, 0, 0, 0)),
             None => RenderableItem::Owned(Box::new(())),
         };
+        let show_home_panel = self.should_render_home_panel();
+        let show_status_rail = self.should_render_status_rail();
+
+        let active_surface = if show_home_panel || show_status_rail {
+            self.frame_requester
+                .schedule_frame_in(Duration::from_millis(250));
+            let system_stats = sample_system_stats();
+            let insights = self.home_panel_insights();
+
+            let mut column = ColumnRenderable::new();
+            if show_home_panel {
+                column.push(HomePanel::new(
+                    HomePanelContext {
+                        project_name: self.project_label(),
+                        model: self.model_display_name().to_string(),
+                        safety_tier: self.safety_tier_home_label().to_string(),
+                        approvals: Self::approval_policy_home_label(
+                            self.config.approval_policy.value(),
+                        )
+                        .to_string(),
+                        sandbox: Self::sandbox_policy_home_label(self.config.sandbox_policy.get())
+                            .to_string(),
+                    },
+                    system_stats.clone(),
+                    insights.clone(),
+                    self.home_panel_state.clone(),
+                ));
+            }
+            if show_status_rail {
+                column.push(StatusRail::new(
+                    self.status_rail_view(&system_stats, &insights),
+                ));
+            }
+            column.push(active_cell_renderable);
+            RenderableItem::Owned(Box::new(column))
+        } else {
+            active_cell_renderable
+        };
         let mut flex = FlexRenderable::new();
-        flex.push(1, active_cell_renderable);
+        flex.push(1, active_surface);
         flex.push(
             0,
             RenderableItem::Borrowed(&self.bottom_pane).inset(Insets::tlbr(1, 0, 0, 0)),
@@ -6091,7 +6669,7 @@ impl Notification {
             }
             Notification::EditApprovalRequested { cwd, changes } => {
                 format!(
-                    "Codex wants to edit {}",
+                    "A-Eye wants to edit {}",
                     if changes.len() == 1 {
                         #[allow(clippy::unwrap_used)]
                         display_path_for(changes.first().unwrap(), cwd)

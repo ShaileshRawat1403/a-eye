@@ -803,6 +803,8 @@ async fn make_chatwidget_manual(
         session_header: SessionHeader::new(resolved_model.clone()),
         initial_user_message: None,
         token_info: None,
+        token_throughput_tracker: TokenThroughputTracker::default(),
+        status_rail_tracker: std::cell::RefCell::new(StatusRailTracker::default()),
         rate_limit_snapshot: None,
         plan_type: None,
         rate_limit_warnings: RateLimitWarningState::default(),
@@ -831,6 +833,9 @@ async fn make_chatwidget_manual(
         forked_from: None,
         frame_requester: FrameRequester::test_dummy(),
         show_welcome_banner: true,
+        home_panel_state: HomePanelState::new(),
+        home_panel_dismissed: false,
+        has_user_submitted_turn: false,
         queued_user_messages: VecDeque::new(),
         suppress_session_configured_redraw: false,
         pending_notification: None,
@@ -868,6 +873,16 @@ fn next_submit_op(op_rx: &mut tokio::sync::mpsc::UnboundedReceiver<Op>) -> Op {
     }
 }
 
+fn user_turn_text(items: &[UserInput]) -> String {
+    items
+        .iter()
+        .find_map(|item| match item {
+            UserInput::Text { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
 fn set_chatgpt_auth(chat: &mut ChatWidget) {
     chat.auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
@@ -875,6 +890,197 @@ fn set_chatgpt_auth(chat: &mut ChatWidget) {
         chat.config.codex_home.clone(),
         chat.auth_manager.clone(),
     ));
+}
+
+fn test_session_configured_event() -> Event {
+    Event {
+        id: "session-configured".into(),
+        msg: EventMsg::SessionConfigured(codex_core::protocol::SessionConfiguredEvent {
+            session_id: ThreadId::new(),
+            forked_from_id: None,
+            thread_name: None,
+            model: "test-model".to_string(),
+            model_provider_id: "test-provider".to_string(),
+            approval_policy: AskForApproval::UnlessTrusted,
+            sandbox_policy: SandboxPolicy::ReadOnly,
+            cwd: PathBuf::from("/tmp"),
+            reasoning_effort: Some(ReasoningEffortConfig::default()),
+            history_log_id: 0,
+            history_entry_count: 0,
+            initial_messages: None,
+            rollout_path: Some(PathBuf::from("/tmp/a-eye-rollout.jsonl")),
+        }),
+    }
+}
+
+#[tokio::test]
+async fn home_panel_shows_for_idle_fresh_session() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(None).await;
+    chat.handle_codex_event(test_session_configured_event());
+
+    let rendered = render_bottom_popup(&chat, 100);
+    assert!(
+        rendered.contains("Welcome to A-Eye"),
+        "expected home panel title, got {rendered}"
+    );
+    assert!(
+        rendered.contains("What would you like to do today?"),
+        "expected landing prompt, got {rendered}"
+    );
+    assert!(
+        rendered.contains("Project detected:"),
+        "expected project context strip, got {rendered}"
+    );
+    assert!(
+        rendered.contains("Safety: Tier 1"),
+        "expected safety strip, got {rendered}"
+    );
+    assert!(
+        rendered.contains("Build something from scratch"),
+        "expected build-from-scratch option, got {rendered}"
+    );
+    assert!(
+        rendered.contains("live CPU") && rendered.contains("speed"),
+        "expected pinned status rail with token speed, got {rendered}"
+    );
+}
+
+#[tokio::test]
+async fn home_panel_hides_after_first_user_submission() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(None).await;
+    chat.handle_codex_event(test_session_configured_event());
+    assert!(
+        render_bottom_popup(&chat, 100).contains("Welcome to A-Eye"),
+        "expected home panel before first submit"
+    );
+
+    chat.bottom_pane.set_composer_text(
+        "Build a simple notes app".to_string(),
+        Vec::new(),
+        Vec::new(),
+    );
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    let rendered = render_bottom_popup(&chat, 100);
+    assert!(
+        !rendered.contains("Welcome to A-Eye"),
+        "home panel should hide after first submit, got {rendered}"
+    );
+}
+
+#[tokio::test]
+async fn status_rail_stays_visible_after_home_panel_is_dismissed() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(None).await;
+    chat.handle_codex_event(test_session_configured_event());
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    let rendered = render_bottom_popup(&chat, 100);
+
+    assert!(
+        !rendered.contains("Welcome to A-Eye"),
+        "expected home panel to be dismissed, got {rendered}"
+    );
+    assert!(
+        rendered.contains("live CPU") && rendered.contains("speed"),
+        "expected pinned status rail after dismissing home panel, got {rendered}"
+    );
+}
+
+#[tokio::test]
+async fn home_panel_enters_journey_and_toggles_step_help() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(None).await;
+    chat.handle_codex_event(test_session_configured_event());
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let intent_form = render_bottom_popup(&chat, 100);
+    assert!(
+        intent_form.contains("Tell me more"),
+        "expected intent form screen, got {intent_form}"
+    );
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let journey = render_bottom_popup(&chat, 100);
+    assert!(
+        journey.contains("Your Change Journey"),
+        "expected journey screen, got {journey}"
+    );
+    assert!(
+        journey.contains("Selected intent: Improve something that already exists"),
+        "expected selected intent in journey screen, got {journey}"
+    );
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE));
+    let with_help = render_bottom_popup(&chat, 100);
+    assert!(
+        with_help.contains("Why this step matters"),
+        "expected step help hint, got {with_help}"
+    );
+}
+
+#[tokio::test]
+async fn home_panel_journey_continue_opens_guide_popup() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(None).await;
+    chat.handle_codex_event(test_session_configured_event());
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    let rendered = render_bottom_popup(&chat, 100);
+    assert!(
+        rendered.contains("A-Eye guided actions"),
+        "expected guide popup, got {rendered}"
+    );
+    assert!(
+        rendered.contains("Focus: Improve something that already exists"),
+        "expected guided popup focus from selected home intent, got {rendered}"
+    );
+    assert!(
+        !rendered.contains("Welcome to A-Eye"),
+        "home panel should be dismissed after journey continue, got {rendered}"
+    );
+}
+
+#[tokio::test]
+async fn home_panel_selected_option_carries_to_guide_focus() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(None).await;
+    chat.handle_codex_event(test_session_configured_event());
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    let rendered = render_bottom_popup(&chat, 100);
+    assert!(
+        rendered.contains("Focus: Fix an error or failing test"),
+        "expected fix-focused guide popup subtitle, got {rendered}"
+    );
+    assert!(
+        rendered.contains("Help me fix a bug safely"),
+        "expected fix workflow action card, got {rendered}"
+    );
+}
+
+#[tokio::test]
+async fn home_panel_numeric_selection_supports_build_from_scratch() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(None).await;
+    chat.handle_codex_event(test_session_configured_event());
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('5'), KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    let rendered = render_bottom_popup(&chat, 100);
+    assert!(
+        rendered.contains("Focus: Build something from scratch"),
+        "expected build-from-scratch guided focus, got {rendered}"
+    );
+    assert!(
+        rendered.contains("Build a project from scratch"),
+        "expected build-from-scratch guided action, got {rendered}"
+    );
 }
 
 #[tokio::test]
@@ -2314,6 +2520,48 @@ async fn plan_slash_command_switches_to_plan_mode() {
     assert!(rx.try_recv().is_err(), "plan should not emit an app event");
     assert_eq!(chat.active_collaboration_mode_kind(), ModeKind::Plan);
     assert_eq!(chat.current_collaboration_mode(), &initial);
+}
+
+#[tokio::test]
+async fn explain_slash_command_submits_syntax_explainer_prompt() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(None).await;
+    chat.handle_codex_event(test_session_configured_event());
+
+    chat.dispatch_command(SlashCommand::Explain);
+
+    let text = match next_submit_op(&mut op_rx) {
+        Op::UserTurn { items, .. } => user_turn_text(&items),
+        other => panic!("expected Op::UserTurn, got {other:?}"),
+    };
+    assert!(
+        text.contains("Syntax Explainer"),
+        "expected syntax explainer framing, got {text}"
+    );
+    assert!(
+        text.contains("the code relevant to my current task"),
+        "expected default explain target, got {text}"
+    );
+}
+
+#[tokio::test]
+async fn explain_slash_command_with_args_targets_requested_scope() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(None).await;
+    chat.handle_codex_event(test_session_configured_event());
+
+    chat.dispatch_command_with_args(SlashCommand::Explain, "src/lib.rs:42".to_string());
+
+    let text = match next_submit_op(&mut op_rx) {
+        Op::UserTurn { items, .. } => user_turn_text(&items),
+        other => panic!("expected Op::UserTurn, got {other:?}"),
+    };
+    assert!(
+        text.contains("src/lib.rs:42"),
+        "expected explicit explain target, got {text}"
+    );
+    assert!(
+        text.contains("Do not edit files"),
+        "expected explanation-only guardrail, got {text}"
+    );
 }
 
 #[tokio::test]

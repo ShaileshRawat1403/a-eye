@@ -51,9 +51,9 @@ impl ExperimentalFeaturesView {
         app_event_tx: AppEventSender,
     ) -> Self {
         let mut header = ColumnRenderable::new();
-        header.push(Line::from("Experimental features".bold()));
+        header.push(Line::from("Advanced (beta) features".bold()));
         header.push(Line::from(
-            "Toggle experimental features. Changes are saved to config.toml.".dim(),
+            "Optional power features. Changes are saved for future sessions.".dim(),
         ));
 
         let mut view = Self {
@@ -255,7 +255,7 @@ impl Renderable for ExperimentalFeaturesView {
                 &rows,
                 &self.state,
                 MAX_POPUP_ROWS,
-                "  No experimental features available for now",
+                "  No advanced beta features are available right now",
             );
         }
 
@@ -288,8 +288,8 @@ fn experimental_popup_hint_line() -> Line<'static> {
     Line::from(vec![
         "Press ".into(),
         key_hint::plain(KeyCode::Enter).into(),
-        " to toggle or ".into(),
+        " to toggle, then ".into(),
         key_hint::plain(KeyCode::Esc).into(),
-        " to save for next conversation".into(),
+        " to save and close".into(),
     ])
 }

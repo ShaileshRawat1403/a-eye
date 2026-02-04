@@ -86,8 +86,24 @@ impl WidgetRef for &WelcomeWidget {
         lines.push(Line::from(vec![
             "  ".into(),
             "Welcome to ".into(),
-            "Codex".bold(),
-            ", OpenAI's command-line coding agent".into(),
+            "A-Eye".bold(),
+            ", your guided command-line software agent".into(),
+        ]));
+        lines.push("".into());
+        lines.push(Line::from(vec!["  Quick start cards".bold()]));
+        lines.push(Line::from(vec![
+            "  1) ".cyan(),
+            "Run ".into(),
+            "a-eye setup".cyan(),
+            " to connect a model and pick your safety tier.".into(),
+        ]));
+        lines.push(Line::from(vec![
+            "  2) ".cyan(),
+            "Describe your goal in plain language.".into(),
+        ]));
+        lines.push(Line::from(vec![
+            "  3) ".cyan(),
+            "Review changes before apply.".into(),
         ]));
 
         Paragraph::new(lines)

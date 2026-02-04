@@ -12,6 +12,32 @@ A-Eye can connect to MCP servers configured in `~/.codex/config.toml`. See the c
 
 - https://developers.openai.com/codex/config-reference
 
+## Model setup
+
+Use the guided model setup to configure commercial or open-source providers without editing TOML by hand:
+
+```bash
+a-eye setup
+a-eye models list
+a-eye models setup
+```
+
+Common non-interactive examples:
+
+```bash
+a-eye models setup --provider ollama --model llama3.1:8b
+a-eye models setup --provider openrouter --model openai/gpt-oss-20b \
+  --base-url https://openrouter.ai/api/v1 \
+  --api-key-env OPENROUTER_API_KEY
+```
+
+Settings are persisted to `~/.codex/config.toml`.
+
+The first-run wizard (`a-eye setup`) also writes:
+
+- `approval_policy` (mapped from safety tier)
+- `sandbox_mode` (mapped from safety tier)
+
 ## Apps (Connectors)
 
 Use `$` in the composer to insert a ChatGPT connector; the popover lists accessible

@@ -1,8 +1,10 @@
 ---
 source: tui/src/chatwidget/tests.rs
-assertion_line: 1989
 expression: popup
 ---
+◑ CPU ·······▄ 42% MEM ·······▅ 58% GPU ·······▃ 23% speed ········ warming spac
+
+
   Select Model and Effort
   Access legacy models by running codex -m <model_name> or in your config.toml
 

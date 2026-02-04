@@ -43,17 +43,19 @@ impl WidgetRef for &TrustDirectoryWidget {
     fn render_ref(&self, area: Rect, buf: &mut Buffer) {
         let mut column = ColumnRenderable::new();
 
+        column.push(Line::from(vec!["▣ ".cyan(), "Folder safety".bold()]));
+        column.push("");
         column.push(Line::from(vec![
             "> ".into(),
-            "You are running Codex in ".bold(),
+            "A-Eye is running in ".bold(),
             self.cwd.to_string_lossy().to_string().into(),
         ]));
         column.push("");
 
         let guidance = if self.is_git_repo {
-            "Since this folder is version controlled, you may wish to allow Codex to work in this folder without asking for approval."
+            "Recommended for most users: ask before edits and commands. You can switch to a faster mode later."
         } else {
-            "Since this folder is not version controlled, we recommend requiring approval of all edits and commands."
+            "This folder is not version controlled. Safer mode (ask before changes) is strongly recommended."
         };
 
         column.push(
@@ -66,21 +68,21 @@ impl WidgetRef for &TrustDirectoryWidget {
         let mut options: Vec<(&str, TrustDirectorySelection)> = Vec::new();
         if self.is_git_repo {
             options.push((
-                "Yes, allow Codex to work in this folder without asking for approval",
-                TrustDirectorySelection::Trust,
+                "Ask before edits and commands (recommended)",
+                TrustDirectorySelection::DontTrust,
             ));
             options.push((
-                "No, ask me to approve edits and commands",
-                TrustDirectorySelection::DontTrust,
+                "Allow faster changes in this folder",
+                TrustDirectorySelection::Trust,
             ));
         } else {
             options.push((
-                "Allow Codex to work in this folder without asking for approval",
-                TrustDirectorySelection::Trust,
+                "Ask before edits and commands (recommended)",
+                TrustDirectorySelection::DontTrust,
             ));
             options.push((
-                "Require approval of edits and commands",
-                TrustDirectorySelection::DontTrust,
+                "Allow edits and commands without asking",
+                TrustDirectorySelection::Trust,
             ));
         }
 
@@ -108,7 +110,7 @@ impl WidgetRef for &TrustDirectoryWidget {
             Line::from(vec![
                 "Press ".dim(),
                 key_hint::plain(KeyCode::Enter).into(),
-                " to continue".dim(),
+                " to save this folder safety choice".dim(),
             ])
             .inset(Insets::tlbr(0, 2, 0, 0)),
         );
@@ -125,13 +127,13 @@ impl KeyboardHandler for TrustDirectoryWidget {
 
         match key_event.code {
             KeyCode::Up | KeyCode::Char('k') => {
-                self.highlighted = TrustDirectorySelection::Trust;
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
                 self.highlighted = TrustDirectorySelection::DontTrust;
             }
-            KeyCode::Char('1') | KeyCode::Char('y') => self.handle_trust(),
-            KeyCode::Char('2') | KeyCode::Char('n') => self.handle_dont_trust(),
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.highlighted = TrustDirectorySelection::Trust;
+            }
+            KeyCode::Char('1') | KeyCode::Char('n') => self.handle_dont_trust(),
+            KeyCode::Char('2') | KeyCode::Char('y') => self.handle_trust(),
             KeyCode::Enter => match self.highlighted {
                 TrustDirectorySelection::Trust => self.handle_trust(),
                 TrustDirectorySelection::DontTrust => self.handle_dont_trust(),

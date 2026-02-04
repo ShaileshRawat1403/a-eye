@@ -13,6 +13,8 @@ pub enum SlashCommand {
     // DO NOT ALPHA-SORT! Enum order is presentation order in the popup, so
     // more frequently used commands should be listed first.
     Model,
+    Guide,
+    Explain,
     Approvals,
     Permissions,
     #[strum(serialize = "setup-elevated-sandbox")]
@@ -51,31 +53,33 @@ impl SlashCommand {
         match self {
             SlashCommand::Feedback => "send logs to maintainers",
             SlashCommand::New => "start a new chat during a conversation",
-            SlashCommand::Init => "create an AGENTS.md file with instructions for Codex",
+            SlashCommand::Init => "create an AGENTS.md file with instructions for A-Eye",
             SlashCommand::Compact => "summarize conversation to prevent hitting the context limit",
             SlashCommand::Review => "review my current changes and find issues",
             SlashCommand::Rename => "rename the current thread",
             SlashCommand::Resume => "resume a saved chat",
             SlashCommand::Fork => "fork the current chat",
-            // SlashCommand::Undo => "ask Codex to undo a turn",
-            SlashCommand::Quit | SlashCommand::Exit => "exit Codex",
+            // SlashCommand::Undo => "ask A-Eye to undo a turn",
+            SlashCommand::Quit | SlashCommand::Exit => "exit A-Eye",
             SlashCommand::Diff => "show git diff (including untracked files)",
             SlashCommand::Mention => "mention a file",
-            SlashCommand::Skills => "use skills to improve how Codex performs specific tasks",
+            SlashCommand::Skills => "use skills to improve how A-Eye performs specific tasks",
             SlashCommand::Status => "show current session configuration and token usage",
             SlashCommand::Ps => "list background terminals",
             SlashCommand::Model => "choose what model and reasoning effort to use",
-            SlashCommand::Personality => "choose a communication style for Codex",
+            SlashCommand::Guide => "open a guided action menu for common tasks",
+            SlashCommand::Explain => "explain syntax or code in plain language",
+            SlashCommand::Personality => "choose a communication style for A-Eye",
             SlashCommand::Plan => "switch to Plan mode",
             SlashCommand::Collab => "change collaboration mode (experimental)",
             SlashCommand::Agent => "switch the active agent thread",
-            SlashCommand::Approvals => "choose what Codex can do without approval",
-            SlashCommand::Permissions => "choose what Codex is allowed to do",
+            SlashCommand::Approvals => "choose what A-Eye can do without approval",
+            SlashCommand::Permissions => "choose what A-Eye is allowed to do",
             SlashCommand::ElevateSandbox => "set up elevated agent sandbox",
-            SlashCommand::Experimental => "toggle experimental features",
+            SlashCommand::Experimental => "open advanced beta feature toggles",
             SlashCommand::Mcp => "list configured MCP tools",
             SlashCommand::Apps => "manage apps",
-            SlashCommand::Logout => "log out of Codex",
+            SlashCommand::Logout => "log out of A-Eye",
             SlashCommand::Rollout => "print the rollout file path",
             SlashCommand::TestApproval => "test approval request",
         }
@@ -97,6 +101,8 @@ impl SlashCommand {
             | SlashCommand::Compact
             // | SlashCommand::Undo
             | SlashCommand::Model
+            | SlashCommand::Guide
+            | SlashCommand::Explain
             | SlashCommand::Personality
             | SlashCommand::Approvals
             | SlashCommand::Permissions

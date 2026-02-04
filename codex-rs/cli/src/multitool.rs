@@ -26,6 +26,7 @@ use crate::LandlockCommand;
 use crate::SeatbeltCommand;
 use crate::WindowsCommand;
 use crate::aeye;
+use crate::first_run_setup;
 use crate::login::read_api_key_from_stdin;
 use crate::login::run_login_status;
 use crate::login::run_login_with_api_key;
@@ -33,6 +34,7 @@ use crate::login::run_login_with_chatgpt;
 use crate::login::run_login_with_device_code;
 use crate::login::run_logout;
 use crate::mcp_cmd::McpCli;
+use crate::model_setup;
 
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
@@ -47,6 +49,7 @@ use codex_core::terminal::TerminalName;
 /// If no subcommand is specified, options will be forwarded to the interactive CLI.
 #[derive(Debug, Parser)]
 #[clap(
+    name = "a-eye",
     author,
     version,
     // If a sub‑command is given, ignore requirements of the default args.
@@ -134,6 +137,12 @@ enum Subcommand {
 
     /// Inspect feature flags.
     Features(FeaturesCli),
+
+    /// Guided first-run wizard: model setup + safety tier selection.
+    Setup(first_run_setup::SetupCommand),
+
+    /// Guided model provider setup for commercial and open-source models.
+    Models(model_setup::ModelsCommand),
 }
 
 #[derive(Debug, Parser)]
@@ -750,6 +759,12 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                 disable_feature_in_config(&interactive, &feature).await?;
             }
         },
+        Some(Subcommand::Models(cmd)) => {
+            model_setup::run(cmd).await?;
+        }
+        Some(Subcommand::Setup(cmd)) => {
+            first_run_setup::run(cmd).await?;
+        }
     }
 
     Ok(())
@@ -1304,6 +1319,84 @@ mod tests {
             panic!("expected features disable");
         };
         assert_eq!(feature, "shell_tool");
+    }
+
+    #[test]
+    fn models_list_parses() {
+        let cli = MultitoolCli::try_parse_from(["a-eye", "models", "list"])
+            .expect("parse should succeed");
+        let Some(Subcommand::Models(model_setup::ModelsCommand { subcommand })) = cli.subcommand
+        else {
+            panic!("expected models subcommand");
+        };
+        assert_matches!(subcommand, Some(model_setup::ModelsSubcommand::List));
+    }
+
+    #[test]
+    fn models_setup_parses_provider_flags() {
+        let cli = MultitoolCli::try_parse_from([
+            "a-eye",
+            "models",
+            "setup",
+            "--provider",
+            "openrouter",
+            "--model",
+            "openai/gpt-oss-20b",
+            "--base-url",
+            "https://openrouter.ai/api/v1",
+            "--api-key-env",
+            "OPENROUTER_API_KEY",
+            "--wire-api",
+            "chat",
+        ])
+        .expect("parse should succeed");
+
+        let Some(Subcommand::Models(model_setup::ModelsCommand { subcommand })) = cli.subcommand
+        else {
+            panic!("expected models subcommand");
+        };
+
+        let Some(model_setup::ModelsSubcommand::Setup(setup)) = subcommand else {
+            panic!("expected models setup command");
+        };
+
+        assert_eq!(
+            setup.provider,
+            Some(model_setup::ProviderPreset::Openrouter)
+        );
+        assert_eq!(setup.model.as_deref(), Some("openai/gpt-oss-20b"));
+        assert_eq!(
+            setup.base_url.as_deref(),
+            Some("https://openrouter.ai/api/v1")
+        );
+        assert_eq!(setup.api_key_env.as_deref(), Some("OPENROUTER_API_KEY"));
+        assert_eq!(setup.wire_api, Some(model_setup::WireApiArg::Chat));
+    }
+
+    #[test]
+    fn setup_parses_tier_and_model_flags() {
+        let cli = MultitoolCli::try_parse_from([
+            "a-eye",
+            "setup",
+            "--provider",
+            "ollama",
+            "--model",
+            "llama3.1:8b",
+            "--tier",
+            "2",
+        ])
+        .expect("parse should succeed");
+
+        let Some(Subcommand::Setup(setup)) = cli.subcommand else {
+            panic!("expected setup subcommand");
+        };
+
+        assert_eq!(
+            setup.model_setup.provider,
+            Some(model_setup::ProviderPreset::Ollama)
+        );
+        assert_eq!(setup.model_setup.model.as_deref(), Some("llama3.1:8b"));
+        assert_eq!(setup.tier, Some(2));
     }
 
     #[test]

@@ -17,6 +17,9 @@ use crate::LoginStatus;
 use crate::onboarding::auth::AuthModeWidget;
 use crate::onboarding::auth::SignInOption;
 use crate::onboarding::auth::SignInState;
+use crate::onboarding::safety_tier::SafetyTierSelection;
+use crate::onboarding::safety_tier::SafetyTierWidget;
+use crate::onboarding::summary::SummaryWidget;
 use crate::onboarding::trust_directory::TrustDirectorySelection;
 use crate::onboarding::trust_directory::TrustDirectoryWidget;
 use crate::onboarding::welcome::WelcomeWidget;
@@ -32,6 +35,8 @@ enum Step {
     Welcome(WelcomeWidget),
     Auth(AuthModeWidget),
     TrustDirectory(TrustDirectoryWidget),
+    SafetyTier(SafetyTierWidget),
+    Summary(SummaryWidget),
 }
 
 pub(crate) trait KeyboardHandler {
@@ -67,6 +72,7 @@ pub(crate) struct OnboardingScreenArgs {
 
 pub(crate) struct OnboardingResult {
     pub directory_trust_decision: Option<TrustDirectorySelection>,
+    pub safety_tier_decision: Option<SafetyTierSelection>,
     pub should_exit: bool,
 }
 
@@ -110,22 +116,25 @@ impl OnboardingScreen {
             }))
         }
         let is_git_repo = get_git_repo_root(&cwd).is_some();
-        let highlighted = if is_git_repo {
-            TrustDirectorySelection::Trust
-        } else {
-            // Default to not trusting the directory if it's not a git repo.
-            TrustDirectorySelection::DontTrust
-        };
+        // Safer default for non-dev onboarding: require explicit approval first.
+        let highlighted = TrustDirectorySelection::DontTrust;
         if show_trust_screen {
             steps.push(Step::TrustDirectory(TrustDirectoryWidget {
                 cwd,
-                codex_home,
+                codex_home: codex_home.clone(),
                 is_git_repo,
                 selection: None,
                 highlighted,
                 error: None,
             }))
         }
+
+        let should_show_safety_tier =
+            show_trust_screen && !config.did_user_set_custom_approval_policy_or_sandbox_mode;
+        if should_show_safety_tier {
+            steps.push(Step::SafetyTier(SafetyTierWidget::new(codex_home)));
+        }
+        steps.push(Step::Summary(SummaryWidget::new()));
         // TODO: add git warning.
         Self {
             request_frame: tui.frame_requester(),
@@ -184,6 +193,19 @@ impl OnboardingScreen {
             .iter()
             .find_map(|step| {
                 if let Step::TrustDirectory(TrustDirectoryWidget { selection, .. }) = step {
+                    Some(*selection)
+                } else {
+                    None
+                }
+            })
+            .flatten()
+    }
+
+    pub fn safety_tier_decision(&self) -> Option<SafetyTierSelection> {
+        self.steps
+            .iter()
+            .find_map(|step| {
+                if let Step::SafetyTier(SafetyTierWidget { selection, .. }) = step {
                     Some(*selection)
                 } else {
                     None
@@ -341,6 +363,8 @@ impl KeyboardHandler for Step {
             Step::Welcome(widget) => widget.handle_key_event(key_event),
             Step::Auth(widget) => widget.handle_key_event(key_event),
             Step::TrustDirectory(widget) => widget.handle_key_event(key_event),
+            Step::SafetyTier(widget) => widget.handle_key_event(key_event),
+            Step::Summary(widget) => widget.handle_key_event(key_event),
         }
     }
 
@@ -349,6 +373,8 @@ impl KeyboardHandler for Step {
             Step::Welcome(_) => {}
             Step::Auth(widget) => widget.handle_paste(pasted),
             Step::TrustDirectory(widget) => widget.handle_paste(pasted),
+            Step::SafetyTier(_) => {}
+            Step::Summary(_) => {}
         }
     }
 }
@@ -359,6 +385,8 @@ impl StepStateProvider for Step {
             Step::Welcome(w) => w.get_step_state(),
             Step::Auth(w) => w.get_step_state(),
             Step::TrustDirectory(w) => w.get_step_state(),
+            Step::SafetyTier(w) => w.get_step_state(),
+            Step::Summary(w) => w.get_step_state(),
         }
     }
 }
@@ -373,6 +401,12 @@ impl WidgetRef for Step {
                 widget.render_ref(area, buf);
             }
             Step::TrustDirectory(widget) => {
+                widget.render_ref(area, buf);
+            }
+            Step::SafetyTier(widget) => {
+                widget.render_ref(area, buf);
+            }
+            Step::Summary(widget) => {
                 widget.render_ref(area, buf);
             }
         }
@@ -445,6 +479,7 @@ pub(crate) async fn run_onboarding_app(
     }
     Ok(OnboardingResult {
         directory_trust_decision: onboarding_screen.directory_trust_decision(),
+        safety_tier_decision: onboarding_screen.safety_tier_decision(),
         should_exit: onboarding_screen.should_exit(),
     })
 }

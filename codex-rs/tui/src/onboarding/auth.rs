@@ -259,11 +259,11 @@ impl AuthModeWidget {
         let mut lines: Vec<Line> = vec![
             Line::from(vec![
                 "  ".into(),
-                "Sign in with ChatGPT to use Codex as part of your paid plan".into(),
+                "Connect A-Eye to a model provider".bold(),
             ]),
             Line::from(vec![
                 "  ".into(),
-                "or connect an API key for usage-based billing".into(),
+                "Pick the simplest option now; you can change this later.".into(),
             ]),
             "".into(),
         ];
@@ -300,9 +300,9 @@ impl AuthModeWidget {
         let chatgpt_description = if !self.is_chatgpt_login_allowed() {
             "ChatGPT login is disabled"
         } else {
-            "Usage included with Plus, Pro, Team, and Enterprise plans"
+            "Best default for most users (uses your ChatGPT plan)"
         };
-        let device_code_description = "Sign in from another device with a one-time code";
+        let device_code_description = "Use this when your terminal cannot open a browser";
 
         for (idx, option) in self.displayed_sign_in_options().into_iter().enumerate() {
             match option {
@@ -310,7 +310,7 @@ impl AuthModeWidget {
                     lines.extend(create_mode_item(
                         idx,
                         option,
-                        "Sign in with ChatGPT",
+                        "Use ChatGPT account (recommended)",
                         chatgpt_description,
                     ));
                 }
@@ -318,7 +318,7 @@ impl AuthModeWidget {
                     lines.extend(create_mode_item(
                         idx,
                         option,
-                        "Sign in with Device Code",
+                        "Use Device Code",
                         device_code_description,
                     ));
                 }
@@ -326,8 +326,8 @@ impl AuthModeWidget {
                     lines.extend(create_mode_item(
                         idx,
                         option,
-                        "Provide your own API key",
-                        "Pay for what you use",
+                        "Use your own API key",
+                        "Usage-based billing",
                     ));
                 }
             }
@@ -400,14 +400,15 @@ impl AuthModeWidget {
             "".into(),
             "  Before you start:".into(),
             "".into(),
-            "  Decide how much autonomy you want to grant Codex".into(),
+            "  Choose how cautious A-Eye should be".into(),
             Line::from(vec![
-                "  For more details see the ".into(),
-                "\u{1b}]8;;https://github.com/openai/codex\u{7}Codex docs\u{1b}]8;;\u{7}".underlined(),
+                "  You can run ".into(),
+                "a-eye setup".cyan(),
+                " to configure model + safety tier.".into(),
             ])
             .dim(),
             "".into(),
-            "  Codex can make mistakes".into(),
+            "  A-Eye can make mistakes".into(),
             "  Review the code it writes and commands it runs".dim().into(),
             "".into(),
             "  Powered by your ChatGPT account".into(),
@@ -441,7 +442,7 @@ impl AuthModeWidget {
         let lines = vec![
             "✓ API key configured".fg(Color::Green).into(),
             "".into(),
-            "  Codex will use usage-based billing with your API key.".into(),
+            "  A-Eye will use usage-based billing with your API key.".into(),
         ];
 
         Paragraph::new(lines)

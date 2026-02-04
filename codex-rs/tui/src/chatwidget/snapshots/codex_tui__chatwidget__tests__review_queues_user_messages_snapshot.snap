@@ -10,7 +10,7 @@ expression: term.backend().vt100().screen().contents()
 
 
 
-
+◑ CPU ·······▄ 42% MEM ·······▅ 58% GPU ·······▃ 23% speed ········ warming spac
 
 • Working (0s • esc to interrupt)
 

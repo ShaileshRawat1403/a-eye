@@ -92,6 +92,7 @@ mod render;
 mod resume_picker;
 mod selection_list;
 mod session_log;
+mod shell;
 mod shimmer;
 mod skills_helpers;
 mod slash_command;
@@ -114,7 +115,6 @@ mod wrapping;
 #[cfg(test)]
 pub mod test_backend;
 
-use crate::onboarding::TrustDirectorySelection;
 use crate::onboarding::onboarding_screen::OnboardingScreenArgs;
 use crate::onboarding::onboarding_screen::run_onboarding_app;
 use crate::tui::Tui;
@@ -494,12 +494,10 @@ async fn run_ratatui_app(
                 exit_reason: ExitReason::UserRequested,
             });
         }
-        // if the user acknowledged windows or made an explicit decision ato trust the directory, reload the config accordingly
-        if onboarding_result
-            .directory_trust_decision
-            .map(|d| d == TrustDirectorySelection::Trust)
-            .unwrap_or(false)
-        {
+        // Reload config when onboarding persisted trust/safety settings.
+        let should_reload_config = onboarding_result.directory_trust_decision.is_some()
+            || onboarding_result.safety_tier_decision.is_some();
+        if should_reload_config {
             load_config_or_exit(
                 cli_kv_overrides.clone(),
                 overrides.clone(),

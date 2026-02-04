@@ -25,7 +25,9 @@ async fn malformed_rules_should_not_panic() -> anyhow::Result<()> {
     let config_contents = format!(
         r#"
 # Pick a local provider so the CLI doesn't prompt for OpenAI auth in this test.
-model_provider = "ollama"
+# Use ollama-chat here to avoid the ollama responses wire-api deprecation probe.
+model_provider = "ollama-chat"
+check_for_update_on_startup = false
 
 [projects]
 "{cwd}" = {{ trust_level = "trusted" }}
@@ -57,11 +59,27 @@ async fn run_codex_cli(
     cwd: impl AsRef<Path>,
 ) -> anyhow::Result<CodexCliOutput> {
     let codex_cli = codex_utils_cargo_bin::cargo_bin("codex")?;
-    let mut env = HashMap::new();
+    // PTY spawning clears the process environment, so seed a stable baseline first.
+    let mut env: HashMap<String, String> = std::env::vars().collect();
+    let isolated_home = codex_home.as_ref().join("home");
+    std::fs::create_dir_all(&isolated_home)?;
+
     env.insert(
         "CODEX_HOME".to_string(),
         codex_home.as_ref().display().to_string(),
     );
+    env.insert("HOME".to_string(), isolated_home.display().to_string());
+    env.insert(
+        "XDG_CONFIG_HOME".to_string(),
+        isolated_home.join(".config").display().to_string(),
+    );
+    env.insert(
+        "XDG_CACHE_HOME".to_string(),
+        isolated_home.join(".cache").display().to_string(),
+    );
+    // Avoid system proxy discovery so startup behavior is deterministic across macOS environments.
+    env.insert("NO_PROXY".to_string(), "*".to_string());
+    env.insert("no_proxy".to_string(), "*".to_string());
 
     let args = vec!["-c".to_string(), "analytics.enabled=false".to_string()];
     let spawned = codex_utils_pty::spawn_pty_process(

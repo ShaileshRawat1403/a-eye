@@ -29,6 +29,45 @@ use crate::pager_overlay::Overlay;
 use crate::render::highlight::highlight_bash_to_lines;
 use crate::render::renderable::Renderable;
 use crate::resume_picker::SessionSelection;
+use crate::shell::ARTIFACT_SCHEMA_V1;
+use crate::shell::ApplyStatus as ShellApplyStatus;
+use crate::shell::ApprovalAction as ShellApprovalAction;
+use crate::shell::ApprovalDecisionKind as ShellApprovalDecisionKind;
+use crate::shell::ApprovalDecisionRecord as ShellApprovalDecisionRecord;
+use crate::shell::ApprovalGateRequirement as ShellApprovalGateRequirement;
+use crate::shell::ApprovalRequestRecord as ShellApprovalRequestRecord;
+use crate::shell::ApprovalRiskClass as ShellApprovalRiskClass;
+use crate::shell::ErrorKind as ShellErrorKind;
+use crate::shell::JourneyState as ShellJourneyState;
+use crate::shell::PolicyTier as ShellPolicyTier;
+use crate::shell::RiskLevel as ShellRiskLevel;
+use crate::shell::RuntimeAction as ShellRuntimeAction;
+use crate::shell::RuntimeToolExecutor;
+use crate::shell::SafetyMode as ShellSafetyMode;
+use crate::shell::ScanStatus as ShellScanStatus;
+use crate::shell::Shell;
+use crate::shell::ShellAction;
+use crate::shell::ShellState;
+use crate::shell::ShellTab;
+use crate::shell::SimulatedToolExecutor;
+use crate::shell::SystemArtifact as ShellSystemArtifact;
+use crate::shell::ToolExecutionContext as ShellToolExecutionContext;
+use crate::shell::ToolExecutionPayload as ShellToolExecutionPayload;
+use crate::shell::ToolExecutor as ShellToolExecutor;
+use crate::shell::ToolId as ShellToolId;
+use crate::shell::ToolInvocation as ShellToolInvocation;
+use crate::shell::ToolInvocationStatus as ShellToolInvocationStatus;
+use crate::shell::ToolRegistry as ShellToolRegistry;
+use crate::shell::ToolResult as ShellToolResult;
+use crate::shell::VerifyArtifact as ShellVerifyArtifact;
+use crate::shell::VerifyCheck as ShellVerifyCheck;
+use crate::shell::VerifyCheckStatus as ShellVerifyCheckStatus;
+use crate::shell::VerifyOverall as ShellVerifyOverall;
+use crate::shell::VerifyStatus as ShellVerifyStatus;
+use crate::shell::WorkflowTemplateId as ShellWorkflowTemplateId;
+use crate::shell::apply_effects as apply_shell_effects;
+use crate::shell::simulate_tool as simulate_shell_tool;
+use crate::shell::workflow_template as shell_workflow_template;
 use crate::tui;
 use crate::tui::TuiEvent;
 use crate::update_action::UpdateAction;
@@ -103,6 +142,40 @@ use toml::Value as TomlValue;
 
 const EXTERNAL_EDITOR_HINT: &str = "Save and close external editor to continue.";
 const THREAD_EVENT_CHANNEL_CAPACITY: usize = 32768;
+const SHELL_TOP_BAR_HEIGHT: u16 = 3;
+const SHELL_TAB_HEIGHT: u16 = 3;
+const SHELL_OVERVIEW_HEIGHT: u16 = 4;
+const SHELL_ACTION_BAR_HEIGHT: u16 = 3;
+const SHELL_MIN_CHAT_HEIGHT: u16 = 6;
+
+fn parse_env_bool(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+fn aeye_shell_v1_enabled() -> bool {
+    std::env::var("A_EYE_SHELL_V1")
+        .ok()
+        .is_some_and(|v| parse_env_bool(&v))
+        || std::env::var("aeye_shell_v1")
+            .ok()
+            .is_some_and(|v| parse_env_bool(&v))
+}
+
+fn aeye_runtime_tool_exec_enabled() -> bool {
+    std::env::var("A_EYE_TOOL_EXEC_RUNTIME")
+        .ok()
+        .is_some_and(|v| parse_env_bool(&v))
+}
+
+fn project_name_for_shell(cwd: &Path) -> String {
+    cwd.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| cwd.display().to_string())
+}
 
 #[derive(Debug, Clone)]
 pub struct AppExitInfo {
@@ -565,6 +638,9 @@ pub(crate) struct App {
     primary_thread_id: Option<ThreadId>,
     primary_session_configured: Option<SessionConfiguredEvent>,
     pending_primary_events: VecDeque<Event>,
+    shell: Option<Shell>,
+    workflow_run: Option<WorkflowRun>,
+    tool_execution_mode: ToolExecutionMode,
 }
 
 #[derive(Default)]
@@ -572,6 +648,33 @@ struct WindowsSandboxState {
     setup_started_at: Option<Instant>,
     // One-shot suppression of the next world-writable scan after user confirmation.
     skip_world_writable_scan_once: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorkflowRunStatus {
+    Running,
+    AwaitingApproval,
+    Blocked,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone)]
+struct WorkflowRun {
+    run_id: u64,
+    template_id: ShellWorkflowTemplateId,
+    step_index: usize,
+    next_invocation_id: u64,
+    status: WorkflowRunStatus,
+    pending_request_id: Option<String>,
+    pending_tool_id: Option<ShellToolId>,
+    pending_invocation_id: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToolExecutionMode {
+    Simulated,
+    Runtime,
 }
 
 fn normalize_harness_overrides_for_cwd(
@@ -1075,6 +1178,13 @@ impl App {
         };
 
         chat_widget.maybe_prompt_windows_sandbox_enable();
+        let shell = if aeye_shell_v1_enabled() {
+            let personality = config.personality.unwrap_or(Personality::Friendly);
+            let project_name = project_name_for_shell(config.cwd.as_path());
+            Some(Shell::new(ShellState::new(project_name, personality)))
+        } else {
+            None
+        };
 
         let file_search = FileSearchManager::new(config.cwd.clone(), app_event_tx.clone());
         #[cfg(not(debug_assertions))]
@@ -1112,6 +1222,13 @@ impl App {
             primary_thread_id: None,
             primary_session_configured: None,
             pending_primary_events: VecDeque::new(),
+            shell,
+            workflow_run: None,
+            tool_execution_mode: if aeye_runtime_tool_exec_enabled() {
+                ToolExecutionMode::Runtime
+            } else {
+                ToolExecutionMode::Simulated
+            },
         };
 
         // On startup, if Agent mode (workspace-write) or ReadOnly is active, warn about world-writable dirs on Windows.
@@ -1232,7 +1349,19 @@ impl App {
         } else {
             match event {
                 TuiEvent::Key(key_event) => {
-                    self.handle_key_event(tui, key_event).await;
+                    let mut consumed_by_shell = false;
+                    if let Some(shell) = self.shell.as_mut() {
+                        let shell_result = shell.handle_key_event(key_event);
+                        apply_shell_effects(
+                            shell_result.effects,
+                            &self.app_event_tx,
+                            &tui.frame_requester(),
+                        );
+                        consumed_by_shell = shell_result.consumed;
+                    }
+                    if !consumed_by_shell {
+                        self.handle_key_event(tui, key_event).await;
+                    }
                 }
                 TuiEvent::Paste(pasted) => {
                     // Many terminals convert newlines to \r when pasting (e.g., iTerm2),
@@ -1240,6 +1369,17 @@ impl App {
                     // [tui-textarea]: https://github.com/rhysd/tui-textarea/blob/4d18622eeac13b309e0ff6a55a46ac6706da68cf/src/textarea.rs#L782-L783
                     // [iTerm2]: https://github.com/gnachman/iTerm2/blob/5d0c0d9f68523cbd0494dad5422998964a2ecd8d/sources/iTermPasteHelper.m#L206-L216
                     let pasted = pasted.replace("\r", "\n");
+                    if let Some(shell) = self.shell.as_mut() {
+                        let shell_result = shell.handle_paste(pasted.clone());
+                        apply_shell_effects(
+                            shell_result.effects,
+                            &self.app_event_tx,
+                            &tui.frame_requester(),
+                        );
+                        if shell_result.consumed {
+                            return Ok(AppRunControl::Continue);
+                        }
+                    }
                     self.chat_widget.handle_paste(pasted);
                 }
                 TuiEvent::Draw => {
@@ -1254,15 +1394,35 @@ impl App {
                     {
                         return Ok(AppRunControl::Continue);
                     }
-                    tui.draw(
-                        self.chat_widget.desired_height(tui.terminal.size()?.width),
-                        |frame| {
+                    let terminal_size = tui.terminal.size()?;
+                    if self.shell.is_some() {
+                        self.sync_shell_runtime();
+                        // Phase 1 shell intentionally preserves inline viewport semantics.
+                        let draw_height = Self::shell_draw_height(
+                            terminal_size.height,
+                            self.chat_widget.desired_height(terminal_size.width),
+                        );
+                        tui.draw(draw_height, |frame| {
+                            if let Some(shell) = self.shell.as_ref() {
+                                let render =
+                                    shell.render(frame.area(), frame.buffer, &self.chat_widget);
+                                if !render.overlay_active
+                                    && let Some((x, y)) =
+                                        self.chat_widget.cursor_pos(render.chat_rect)
+                                {
+                                    frame.set_cursor_position((x, y));
+                                }
+                            }
+                        })?;
+                    } else {
+                        let draw_height = self.chat_widget.desired_height(terminal_size.width);
+                        tui.draw(draw_height, |frame| {
                             self.chat_widget.render(frame.area(), frame.buffer);
                             if let Some((x, y)) = self.chat_widget.cursor_pos(frame.area()) {
                                 frame.set_cursor_position((x, y));
                             }
-                        },
-                    )?;
+                        })?;
+                    }
                     if self.chat_widget.external_editor_state() == ExternalEditorState::Requested {
                         self.chat_widget
                             .set_external_editor_state(ExternalEditorState::Active);
@@ -1304,6 +1464,17 @@ impl App {
                 };
                 self.chat_widget = ChatWidget::new(init, self.server.clone());
                 self.reset_thread_event_state();
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetScanStatus(
+                    ShellScanStatus::Unknown,
+                ));
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetApplyStatus(
+                    ShellApplyStatus::NotApplied,
+                ));
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetVerifyStatus(
+                    ShellVerifyStatus::NotRun,
+                ));
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::ClearJourneyError);
+                self.transition_shell_journey(ShellJourneyState::Idle, true);
                 if let Some(summary) = summary {
                     let mut lines: Vec<Line<'static>> = vec![summary.usage_line.clone().into()];
                     if let Some(command) = summary.resume_command {
@@ -1381,6 +1552,21 @@ impl App {
                                     resumed.session_configured,
                                 );
                                 self.reset_thread_event_state();
+                                self.dispatch_shell_runtime_action(
+                                    ShellRuntimeAction::SetScanStatus(ShellScanStatus::Unknown),
+                                );
+                                self.dispatch_shell_runtime_action(
+                                    ShellRuntimeAction::SetApplyStatus(
+                                        ShellApplyStatus::NotApplied,
+                                    ),
+                                );
+                                self.dispatch_shell_runtime_action(
+                                    ShellRuntimeAction::SetVerifyStatus(ShellVerifyStatus::NotRun),
+                                );
+                                self.dispatch_shell_runtime_action(
+                                    ShellRuntimeAction::ClearJourneyError,
+                                );
+                                self.transition_shell_journey(ShellJourneyState::Idle, true);
                                 if let Some(summary) = summary {
                                     let mut lines: Vec<Line<'static>> =
                                         vec![summary.usage_line.clone().into()];
@@ -1434,6 +1620,19 @@ impl App {
                                 forked.session_configured,
                             );
                             self.reset_thread_event_state();
+                            self.dispatch_shell_runtime_action(ShellRuntimeAction::SetScanStatus(
+                                ShellScanStatus::Unknown,
+                            ));
+                            self.dispatch_shell_runtime_action(ShellRuntimeAction::SetApplyStatus(
+                                ShellApplyStatus::NotApplied,
+                            ));
+                            self.dispatch_shell_runtime_action(
+                                ShellRuntimeAction::SetVerifyStatus(ShellVerifyStatus::NotRun),
+                            );
+                            self.dispatch_shell_runtime_action(
+                                ShellRuntimeAction::ClearJourneyError,
+                            );
+                            self.transition_shell_journey(ShellJourneyState::Idle, true);
                             if let Some(summary) = summary {
                                 let mut lines: Vec<Line<'static>> =
                                     vec![summary.usage_line.clone().into()];
@@ -1522,11 +1721,36 @@ impl App {
                 return Ok(AppRunControl::Exit(ExitReason::Fatal(message)));
             }
             AppEvent::CodexOp(op) => {
+                if let Some(runtime_action) = self.approval_decision_runtime_action(&op) {
+                    if self.handle_workflow_approval_decision(&runtime_action) {
+                        self.dispatch_shell_runtime_action(ShellRuntimeAction::ResolveApproval(
+                            runtime_action,
+                        ));
+                        return Ok(AppRunControl::Continue);
+                    }
+                    let should_submit = self.shell.as_ref().is_none_or(|shell| {
+                        shell.has_pending_approval(runtime_action.request_id.as_str())
+                    });
+                    if should_submit {
+                        self.dispatch_shell_runtime_action(ShellRuntimeAction::ResolveApproval(
+                            runtime_action,
+                        ));
+                    } else {
+                        self.dispatch_shell_runtime_action(ShellRuntimeAction::AppendLog(
+                            "Ignored approval decision without a matching pending request"
+                                .to_string(),
+                        ));
+                        return Ok(AppRunControl::Continue);
+                    }
+                }
                 self.chat_widget.submit_op(op);
             }
             AppEvent::DiffResult(text) => {
                 // Clear the in-progress state in the bottom pane
                 self.chat_widget.on_diff_complete();
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetDiff(text.clone()));
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetTab(ShellTab::Diff));
+                self.transition_shell_journey(ShellJourneyState::ReviewReady, false);
                 // Enter alternate screen using TUI helper and build pager lines
                 let _ = tui.enter_alt_screen();
                 let pager_lines: Vec<ratatui::text::Line<'static>> = if text.trim().is_empty() {
@@ -1556,9 +1780,23 @@ impl App {
                 );
             }
             AppEvent::StartFileSearch(query) => {
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetScanStatus(
+                    ShellScanStatus::Running,
+                ));
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetTab(ShellTab::System));
+                self.transition_shell_journey(ShellJourneyState::Scanning, false);
                 self.file_search.on_user_query(query);
             }
             AppEvent::FileSearchResult { query, matches } => {
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetScanStatus(
+                    ShellScanStatus::Ok,
+                ));
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetSystem(format!(
+                    "Query: {query}\nMatches: {}",
+                    matches.len()
+                )));
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetTab(ShellTab::System));
+                self.transition_shell_journey(ShellJourneyState::Planning, false);
                 self.chat_widget.apply_file_search_result(query, matches);
             }
             AppEvent::RateLimitSnapshotFetched(snapshot) => {
@@ -2164,48 +2402,73 @@ impl App {
                 text,
                 collaboration_mode,
             } => {
+                if matches!(
+                    collaboration_mode.mode,
+                    Some(codex_protocol::config_types::ModeKind::Plan)
+                ) {
+                    self.transition_shell_journey(ShellJourneyState::Planning, false);
+                    self.dispatch_shell_runtime_action(ShellRuntimeAction::SetTab(ShellTab::Plan));
+                    self.start_default_workflow_run();
+                }
                 self.chat_widget
                     .submit_user_message_with_mode(text, collaboration_mode);
             }
             AppEvent::ManageSkillsClosed => {
                 self.chat_widget.handle_manage_skills_closed();
             }
-            AppEvent::FullScreenApprovalRequest(request) => match request {
-                ApprovalRequest::ApplyPatch { cwd, changes, .. } => {
-                    let _ = tui.enter_alt_screen();
-                    let diff_summary = DiffSummary::new(changes, cwd);
-                    self.overlay = Some(Overlay::new_static_with_renderables(
-                        vec![diff_summary.into()],
-                        "P A T C H".to_string(),
-                    ));
+            AppEvent::FullScreenApprovalRequest(request) => {
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::RequestApproval(
+                    self.shell_approval_request_from_bottom_pane(&request),
+                ));
+                match request {
+                    ApprovalRequest::ApplyPatch { cwd, changes, .. } => {
+                        self.dispatch_shell_runtime_action(ShellRuntimeAction::SetTab(
+                            ShellTab::Diff,
+                        ));
+                        self.dispatch_shell_runtime_action(ShellRuntimeAction::SetApplyStatus(
+                            ShellApplyStatus::NotApplied,
+                        ));
+                        self.transition_shell_journey(ShellJourneyState::AwaitingApproval, false);
+                        let _ = tui.enter_alt_screen();
+                        let diff_summary = DiffSummary::new(changes, cwd);
+                        self.overlay = Some(Overlay::new_static_with_renderables(
+                            vec![diff_summary.into()],
+                            "P A T C H".to_string(),
+                        ));
+                    }
+                    ApprovalRequest::Exec { command, .. } => {
+                        self.dispatch_shell_runtime_action(ShellRuntimeAction::SetTab(
+                            ShellTab::Logs,
+                        ));
+                        self.transition_shell_journey(ShellJourneyState::AwaitingApproval, false);
+                        let _ = tui.enter_alt_screen();
+                        let full_cmd = strip_bash_lc_and_escape(&command);
+                        let full_cmd_lines = highlight_bash_to_lines(&full_cmd);
+                        self.overlay = Some(Overlay::new_static_with_lines(
+                            full_cmd_lines,
+                            "E X E C".to_string(),
+                        ));
+                    }
+                    ApprovalRequest::McpElicitation {
+                        server_name,
+                        message,
+                        ..
+                    } => {
+                        self.transition_shell_journey(ShellJourneyState::AwaitingApproval, false);
+                        let _ = tui.enter_alt_screen();
+                        let paragraph = Paragraph::new(vec![
+                            Line::from(vec!["Server: ".into(), server_name.bold()]),
+                            Line::from(""),
+                            Line::from(message),
+                        ])
+                        .wrap(Wrap { trim: false });
+                        self.overlay = Some(Overlay::new_static_with_renderables(
+                            vec![Box::new(paragraph)],
+                            "E L I C I T A T I O N".to_string(),
+                        ));
+                    }
                 }
-                ApprovalRequest::Exec { command, .. } => {
-                    let _ = tui.enter_alt_screen();
-                    let full_cmd = strip_bash_lc_and_escape(&command);
-                    let full_cmd_lines = highlight_bash_to_lines(&full_cmd);
-                    self.overlay = Some(Overlay::new_static_with_lines(
-                        full_cmd_lines,
-                        "E X E C".to_string(),
-                    ));
-                }
-                ApprovalRequest::McpElicitation {
-                    server_name,
-                    message,
-                    ..
-                } => {
-                    let _ = tui.enter_alt_screen();
-                    let paragraph = Paragraph::new(vec![
-                        Line::from(vec!["Server: ".into(), server_name.bold()]),
-                        Line::from(""),
-                        Line::from(message),
-                    ])
-                    .wrap(Wrap { trim: false });
-                    self.overlay = Some(Overlay::new_static_with_renderables(
-                        vec![Box::new(paragraph)],
-                        "E L I C I T A T I O N".to_string(),
-                    ));
-                }
-            },
+            }
         }
         Ok(AppRunControl::Continue)
     }
@@ -2220,13 +2483,717 @@ impl App {
             let errors = errors_for_cwd(&cwd, response);
             emit_skill_load_warnings(&self.app_event_tx, &errors);
         }
+        self.handle_shell_runtime_event(&event.msg);
         self.handle_backtrack_event(&event.msg);
         self.chat_widget.handle_codex_event(event);
     }
 
     fn handle_codex_event_replay(&mut self, event: Event) {
+        self.handle_shell_runtime_event(&event.msg);
         self.handle_backtrack_event(&event.msg);
         self.chat_widget.handle_codex_event_replay(event);
+    }
+
+    fn handle_shell_runtime_event(&mut self, event_msg: &EventMsg) {
+        match event_msg {
+            EventMsg::TurnStarted(_) => {
+                self.transition_shell_journey(ShellJourneyState::Planning, false);
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetTab(ShellTab::Plan));
+            }
+            EventMsg::PlanUpdate(update) => {
+                let plan_body = serde_json::to_string_pretty(update)
+                    .unwrap_or_else(|_| "Unable to render plan update.".to_string());
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetPlan(plan_body));
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetTab(ShellTab::Plan));
+                self.transition_shell_journey(ShellJourneyState::Planning, false);
+            }
+            EventMsg::PlanDelta(delta) => {
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetPlan(
+                    delta.delta.clone(),
+                ));
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetTab(ShellTab::Plan));
+                self.transition_shell_journey(ShellJourneyState::Planning, false);
+            }
+            EventMsg::TurnDiff(diff) => {
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetDiff(
+                    diff.unified_diff.clone(),
+                ));
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetTab(ShellTab::Diff));
+                self.transition_shell_journey(ShellJourneyState::ReviewReady, false);
+            }
+            EventMsg::ExecCommandBegin(begin) => {
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetTab(ShellTab::Logs));
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::AppendLog(format!(
+                    "Running: {}",
+                    begin.command.join(" ")
+                )));
+                self.transition_shell_journey(ShellJourneyState::Verifying, false);
+            }
+            EventMsg::ExecCommandEnd(end) => {
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::AppendLog(format!(
+                    "Exit {}: {}",
+                    end.exit_code,
+                    end.command.join(" ")
+                )));
+                if end.exit_code == 0 {
+                    self.dispatch_shell_runtime_action(ShellRuntimeAction::SetVerifyStatus(
+                        ShellVerifyStatus::Pass,
+                    ));
+                    self.transition_shell_journey(ShellJourneyState::Completed, false);
+                } else {
+                    self.dispatch_shell_runtime_action(ShellRuntimeAction::SetVerifyStatus(
+                        ShellVerifyStatus::Fail,
+                    ));
+                    self.fail_shell_journey(
+                        ShellErrorKind::Runtime,
+                        format!("Command failed with exit code {}.", end.exit_code),
+                    );
+                }
+            }
+            EventMsg::PatchApplyBegin(_) => {
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetApplyStatus(
+                    ShellApplyStatus::NotApplied,
+                ));
+            }
+            EventMsg::PatchApplyEnd(end) => {
+                if end.success {
+                    self.dispatch_shell_runtime_action(ShellRuntimeAction::SetApplyStatus(
+                        ShellApplyStatus::Applied,
+                    ));
+                } else {
+                    self.dispatch_shell_runtime_action(ShellRuntimeAction::SetApplyStatus(
+                        ShellApplyStatus::NotApplied,
+                    ));
+                    self.fail_shell_journey(
+                        ShellErrorKind::Runtime,
+                        "Patch application failed.".to_string(),
+                    );
+                }
+            }
+            EventMsg::TurnComplete(_) => {
+                if let Some(shell) = self.shell.as_ref()
+                    && matches!(shell.journey_state(), ShellJourneyState::Verifying)
+                {
+                    self.dispatch_shell_runtime_action(ShellRuntimeAction::SetVerifyStatus(
+                        ShellVerifyStatus::Pass,
+                    ));
+                    self.transition_shell_journey(ShellJourneyState::Completed, false);
+                }
+            }
+            EventMsg::TurnAborted(_) => {
+                self.transition_shell_journey(ShellJourneyState::Idle, true);
+            }
+            EventMsg::Error(err) => {
+                self.fail_shell_journey(ShellErrorKind::Runtime, err.message.clone());
+            }
+            EventMsg::Warning(warning) => {
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::AppendLog(format!(
+                    "Warning: {}",
+                    warning.message
+                )));
+            }
+            EventMsg::ShutdownComplete => {
+                self.transition_shell_journey(ShellJourneyState::Idle, true);
+            }
+            _ => {}
+        }
+    }
+
+    fn dispatch_shell_runtime_action(&mut self, action: ShellRuntimeAction) {
+        let Some(shell) = self.shell.as_mut() else {
+            return;
+        };
+        let effects = shell.dispatch(ShellAction::Runtime(action));
+        debug_assert!(
+            effects.is_empty(),
+            "runtime shell actions must not emit side effects in phase 2"
+        );
+    }
+
+    fn shell_journey_rank(state: ShellJourneyState) -> u8 {
+        match state {
+            ShellJourneyState::Idle => 0,
+            ShellJourneyState::Scanning => 1,
+            ShellJourneyState::Planning => 2,
+            ShellJourneyState::Diffing => 3,
+            ShellJourneyState::ReviewReady => 4,
+            ShellJourneyState::AwaitingApproval => 5,
+            ShellJourneyState::Verifying => 6,
+            ShellJourneyState::Completed => 7,
+            ShellJourneyState::Failed => 8,
+        }
+    }
+
+    fn transition_shell_journey(&mut self, next: ShellJourneyState, allow_reset: bool) {
+        let Some(shell) = self.shell.as_ref() else {
+            return;
+        };
+        let current = shell.journey_state();
+        if current == next {
+            return;
+        }
+        if allow_reset && matches!(next, ShellJourneyState::Idle) {
+            self.dispatch_shell_runtime_action(ShellRuntimeAction::SetJourneyState(next));
+            return;
+        }
+        if matches!(next, ShellJourneyState::Failed) {
+            self.dispatch_shell_runtime_action(ShellRuntimeAction::SetJourneyState(next));
+            return;
+        }
+        if Self::shell_journey_rank(next) < Self::shell_journey_rank(current) {
+            return;
+        }
+        self.dispatch_shell_runtime_action(ShellRuntimeAction::SetJourneyState(next));
+    }
+
+    fn fail_shell_journey(&mut self, kind: ShellErrorKind, message: String) {
+        self.dispatch_shell_runtime_action(ShellRuntimeAction::SetJourneyError { kind, message });
+        self.transition_shell_journey(ShellJourneyState::Failed, false);
+    }
+
+    fn sync_shell_runtime(&mut self) {
+        let widget_config = self.chat_widget.config_ref();
+        let safety_mode = match widget_config.sandbox_policy.get() {
+            SandboxPolicy::ReadOnly => ShellSafetyMode::Safe,
+            SandboxPolicy::WorkspaceWrite { .. } => ShellSafetyMode::Supervised,
+            SandboxPolicy::ExternalSandbox { .. } => ShellSafetyMode::Supervised,
+            SandboxPolicy::DangerFullAccess => ShellSafetyMode::FullAccess,
+        };
+        let risk = match safety_mode {
+            ShellSafetyMode::Safe => ShellRiskLevel::Low,
+            ShellSafetyMode::Supervised => ShellRiskLevel::Medium,
+            ShellSafetyMode::FullAccess => ShellRiskLevel::High,
+        };
+        let project_name = project_name_for_shell(self.config.cwd.as_path());
+        let personality = widget_config.personality.unwrap_or(Personality::Friendly);
+        let collab_label = Self::collaboration_mode_label(&self.chat_widget);
+        let model = self.chat_widget.current_model().to_string();
+        let policy_tier = Self::shell_policy_tier(
+            *widget_config.approval_policy.get(),
+            widget_config.sandbox_policy.get(),
+        );
+
+        let runtime_actions = vec![
+            ShellRuntimeAction::SetProjectName(project_name),
+            ShellRuntimeAction::SetThreadId(self.chat_widget.thread_id()),
+            ShellRuntimeAction::SetCwd(Some(self.config.cwd.clone())),
+            ShellRuntimeAction::SetSafetyMode(safety_mode),
+            ShellRuntimeAction::SetPolicyTier(policy_tier),
+            ShellRuntimeAction::SetRiskLevel(risk),
+            ShellRuntimeAction::SetPersonality(personality),
+            ShellRuntimeAction::SetCollaborationModeLabel(collab_label),
+            ShellRuntimeAction::SetModelSlug(Some(model)),
+            ShellRuntimeAction::SetReasoningEffort(widget_config.model_reasoning_effort),
+        ];
+
+        for runtime in runtime_actions {
+            self.dispatch_shell_runtime_action(runtime);
+        }
+    }
+
+    fn collaboration_mode_label(chat_widget: &ChatWidget) -> String {
+        use codex_protocol::config_types::ModeKind;
+
+        let mode = chat_widget.current_collaboration_mode().mode;
+        match mode {
+            ModeKind::Plan => "plan".to_string(),
+            ModeKind::Code => "code".to_string(),
+            ModeKind::PairProgramming => "pair".to_string(),
+            ModeKind::Execute => "execute".to_string(),
+            ModeKind::Custom => "custom".to_string(),
+        }
+    }
+
+    fn shell_policy_tier(approval: AskForApproval, sandbox: &SandboxPolicy) -> ShellPolicyTier {
+        match approval {
+            AskForApproval::UnlessTrusted => ShellPolicyTier::Strict,
+            AskForApproval::OnRequest | AskForApproval::OnFailure => ShellPolicyTier::Balanced,
+            AskForApproval::Never => {
+                if matches!(sandbox, SandboxPolicy::DangerFullAccess) {
+                    ShellPolicyTier::Permissive
+                } else {
+                    ShellPolicyTier::Balanced
+                }
+            }
+        }
+    }
+
+    fn current_shell_run_id(&self) -> u64 {
+        self.shell
+            .as_ref()
+            .map_or(1, |shell| shell.current_run_id().max(1))
+    }
+
+    fn approval_request_id_for_elicitation(
+        server_name: &str,
+        request_id: &mcp_types::RequestId,
+    ) -> String {
+        format!("elicitation:{server_name}:{request_id:?}")
+    }
+
+    fn classify_exec_risk(command: &[String]) -> ShellApprovalRiskClass {
+        let command_text = command.join(" ").to_ascii_lowercase();
+        let destructive_markers = [
+            " rm ",
+            " rm-",
+            "sudo rm",
+            " mkfs",
+            " dd ",
+            " shutdown",
+            " reboot",
+            " chmod 777",
+        ];
+        if destructive_markers
+            .iter()
+            .any(|marker| command_text.contains(marker))
+        {
+            ShellApprovalRiskClass::Destructive
+        } else {
+            ShellApprovalRiskClass::Execution
+        }
+    }
+
+    fn shell_approval_request_from_bottom_pane(
+        &self,
+        request: &ApprovalRequest,
+    ) -> ShellApprovalRequestRecord {
+        let run_id = self.current_shell_run_id();
+        match request {
+            ApprovalRequest::Exec {
+                id,
+                command,
+                reason,
+                ..
+            } => ShellApprovalRequestRecord {
+                request_id: id.clone(),
+                run_id,
+                action: ShellApprovalAction::Execute,
+                risk: Self::classify_exec_risk(command),
+                reason: Arc::from(
+                    reason
+                        .as_deref()
+                        .unwrap_or("Command execution requires explicit approval"),
+                ),
+                preview: Arc::from(strip_bash_lc_and_escape(command)),
+                created_at_ms: None,
+            },
+            ApprovalRequest::ApplyPatch {
+                id,
+                reason,
+                cwd,
+                changes,
+            } => ShellApprovalRequestRecord {
+                request_id: id.clone(),
+                run_id,
+                action: ShellApprovalAction::Patch,
+                risk: ShellApprovalRiskClass::PatchOnly,
+                reason: Arc::from(
+                    reason
+                        .as_deref()
+                        .unwrap_or("Applying patch changes requires approval"),
+                ),
+                preview: Arc::from(format!(
+                    "{} file change(s) in {}",
+                    changes.len(),
+                    cwd.display()
+                )),
+                created_at_ms: None,
+            },
+            ApprovalRequest::McpElicitation {
+                server_name,
+                request_id,
+                message,
+            } => ShellApprovalRequestRecord {
+                request_id: Self::approval_request_id_for_elicitation(server_name, request_id),
+                run_id,
+                action: ShellApprovalAction::Elicitation,
+                risk: ShellApprovalRiskClass::Execution,
+                reason: Arc::from("MCP server requested explicit approval"),
+                preview: Arc::from(message.clone()),
+                created_at_ms: None,
+            },
+        }
+    }
+
+    fn approval_decision_runtime_action(&self, op: &Op) -> Option<ShellApprovalDecisionRecord> {
+        let resolve_run_id = |request_id: &str| {
+            self.shell
+                .as_ref()
+                .and_then(|shell| shell.pending_approval_run_id(request_id))
+                .unwrap_or_else(|| self.current_shell_run_id())
+        };
+        match op {
+            Op::ExecApproval { id, decision } => Some(ShellApprovalDecisionRecord {
+                request_id: id.clone(),
+                run_id: resolve_run_id(id),
+                action: ShellApprovalAction::Execute,
+                decision: if matches!(
+                    decision,
+                    codex_core::protocol::ReviewDecision::Approved
+                        | codex_core::protocol::ReviewDecision::ApprovedExecpolicyAmendment { .. }
+                        | codex_core::protocol::ReviewDecision::ApprovedForSession
+                ) {
+                    ShellApprovalDecisionKind::Approved
+                } else {
+                    ShellApprovalDecisionKind::Denied
+                },
+                timestamp_ms: 0,
+            }),
+            Op::PatchApproval { id, decision } => Some(ShellApprovalDecisionRecord {
+                request_id: id.clone(),
+                run_id: resolve_run_id(id),
+                action: ShellApprovalAction::Patch,
+                decision: if matches!(
+                    decision,
+                    codex_core::protocol::ReviewDecision::Approved
+                        | codex_core::protocol::ReviewDecision::ApprovedExecpolicyAmendment { .. }
+                        | codex_core::protocol::ReviewDecision::ApprovedForSession
+                ) {
+                    ShellApprovalDecisionKind::Approved
+                } else {
+                    ShellApprovalDecisionKind::Denied
+                },
+                timestamp_ms: 0,
+            }),
+            Op::ResolveElicitation {
+                server_name,
+                request_id,
+                decision,
+            } => {
+                let shell_request_id =
+                    Self::approval_request_id_for_elicitation(server_name, request_id);
+                Some(ShellApprovalDecisionRecord {
+                    request_id: shell_request_id.clone(),
+                    run_id: resolve_run_id(shell_request_id.as_str()),
+                    action: ShellApprovalAction::Elicitation,
+                    decision: if matches!(decision, codex_core::protocol::ElicitationAction::Accept)
+                    {
+                        ShellApprovalDecisionKind::Approved
+                    } else {
+                        ShellApprovalDecisionKind::Denied
+                    },
+                    timestamp_ms: 0,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    fn is_workflow_request_id(request_id: &str) -> bool {
+        request_id.starts_with("wf:")
+    }
+
+    fn current_policy_tier(&self) -> ShellPolicyTier {
+        let widget_config = self.chat_widget.config_ref();
+        Self::shell_policy_tier(
+            *widget_config.approval_policy.get(),
+            widget_config.sandbox_policy.get(),
+        )
+    }
+
+    fn start_default_workflow_run(&mut self) {
+        let run_id = self.current_shell_run_id().saturating_add(1);
+        self.workflow_run = Some(WorkflowRun {
+            run_id,
+            template_id: ShellWorkflowTemplateId::ScanPlanDiffVerify,
+            step_index: 0,
+            next_invocation_id: 1,
+            status: WorkflowRunStatus::Running,
+            pending_request_id: None,
+            pending_tool_id: None,
+            pending_invocation_id: None,
+        });
+        self.dispatch_shell_runtime_action(ShellRuntimeAction::AppendLog(format!(
+            "Workflow run {run_id} started"
+        )));
+        self.run_workflow_next_step();
+    }
+
+    fn execute_workflow_tool(&mut self, invocation: ShellToolInvocation) -> ShellToolResult {
+        let context = ShellToolExecutionContext {
+            cwd: self.config.cwd.as_path(),
+        };
+        let outcome = match self.tool_execution_mode {
+            ToolExecutionMode::Simulated => {
+                let executor = SimulatedToolExecutor;
+                executor.execute(invocation, &context)
+            }
+            ToolExecutionMode::Runtime => {
+                let executor = RuntimeToolExecutor;
+                executor.execute(invocation, &context)
+            }
+        };
+        self.apply_tool_execution_payload(invocation, &outcome.payload);
+        outcome.result
+    }
+
+    fn apply_tool_execution_payload(
+        &mut self,
+        invocation: ShellToolInvocation,
+        payload: &ShellToolExecutionPayload,
+    ) {
+        match payload {
+            ShellToolExecutionPayload::System {
+                summary,
+                detected_stack,
+                entrypoints,
+                risk_flags,
+            } => {
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetTab(ShellTab::System));
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetScanStatus(
+                    ShellScanStatus::Ok,
+                ));
+                let artifact = ShellSystemArtifact {
+                    schema_version: ARTIFACT_SCHEMA_V1,
+                    run_id: invocation.run_id,
+                    artifact_id: invocation.invocation_id,
+                    repo_root: self.config.cwd.display().to_string(),
+                    detected_stack: detected_stack.clone(),
+                    entrypoints: entrypoints.clone(),
+                    risk_flags: risk_flags.clone(),
+                    summary: summary.clone(),
+                    error: None,
+                };
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetSystemArtifact(artifact));
+                self.transition_shell_journey(ShellJourneyState::Planning, false);
+            }
+            ShellToolExecutionPayload::Plan { steps } => {
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetTab(ShellTab::Plan));
+                let plan = steps
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, step)| format!("{}. {step}", idx + 1))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetPlan(plan));
+                self.transition_shell_journey(ShellJourneyState::Planning, false);
+            }
+            ShellToolExecutionPayload::Diff { unified_diff } => {
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetTab(ShellTab::Diff));
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetDiff(
+                    unified_diff.clone(),
+                ));
+                self.transition_shell_journey(ShellJourneyState::ReviewReady, false);
+            }
+            ShellToolExecutionPayload::Verify { checks, passing } => {
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetTab(ShellTab::Logs));
+                let artifact = ShellVerifyArtifact {
+                    schema_version: ARTIFACT_SCHEMA_V1,
+                    run_id: invocation.run_id,
+                    artifact_id: invocation.invocation_id,
+                    checks: checks
+                        .iter()
+                        .map(|check| ShellVerifyCheck {
+                            name: check.clone(),
+                            status: if *passing {
+                                ShellVerifyCheckStatus::Pass
+                            } else {
+                                ShellVerifyCheckStatus::Fail
+                            },
+                            details: None,
+                        })
+                        .collect(),
+                    overall: if *passing {
+                        ShellVerifyOverall::Passing
+                    } else {
+                        ShellVerifyOverall::Failing
+                    },
+                    error: None,
+                };
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetVerifyArtifact(artifact));
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::SetVerifyStatus(
+                    if *passing {
+                        ShellVerifyStatus::Pass
+                    } else {
+                        ShellVerifyStatus::Fail
+                    },
+                ));
+                if *passing {
+                    self.transition_shell_journey(ShellJourneyState::Completed, false);
+                } else {
+                    self.fail_shell_journey(
+                        ShellErrorKind::Runtime,
+                        "Verify checks failed.".to_string(),
+                    );
+                }
+            }
+        }
+    }
+
+    fn run_workflow_next_step(&mut self) {
+        let Some(mut run) = self.workflow_run.take() else {
+            return;
+        };
+        if !matches!(run.status, WorkflowRunStatus::Running) {
+            self.workflow_run = Some(run);
+            return;
+        }
+
+        loop {
+            let template = shell_workflow_template(run.template_id);
+            if run.step_index >= template.steps.len() {
+                run.status = WorkflowRunStatus::Completed;
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::AppendLog(format!(
+                    "Workflow run {} completed",
+                    run.run_id
+                )));
+                break;
+            }
+
+            let step = template.steps[run.step_index];
+            let invocation_id = run.next_invocation_id;
+            let policy_tier = self.current_policy_tier();
+            let outcome = simulate_shell_tool(policy_tier, step.tool_id);
+
+            if outcome.blocked || matches!(outcome.requirement, ShellApprovalGateRequirement::Deny)
+            {
+                run.status = WorkflowRunStatus::Blocked;
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::AppendLog(format!(
+                    "Workflow run {} blocked at step {} ({})",
+                    run.run_id, step.step_id, outcome.reason
+                )));
+                break;
+            }
+
+            if matches!(
+                outcome.requirement,
+                ShellApprovalGateRequirement::RequireApproval
+            ) {
+                let request_id = format!(
+                    "wf:{}:{}:{}",
+                    run.run_id,
+                    invocation_id,
+                    step.tool_id.as_str()
+                );
+                run.next_invocation_id = run.next_invocation_id.saturating_add(1);
+                run.status = WorkflowRunStatus::AwaitingApproval;
+                run.pending_request_id = Some(request_id.clone());
+                run.pending_tool_id = Some(step.tool_id);
+                run.pending_invocation_id = Some(invocation_id);
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::AppendLog(format!(
+                    "Workflow step {} requires approval (request: {request_id})",
+                    step.step_id
+                )));
+                self.app_event_tx.send(AppEvent::FullScreenApprovalRequest(
+                    ApprovalRequest::Exec {
+                        id: request_id,
+                        command: vec![
+                            "workflow-tool".to_string(),
+                            step.tool_id.as_str().to_string(),
+                        ],
+                        reason: Some(format!(
+                            "workflow run={} step={} tool={} risk={}",
+                            run.run_id,
+                            step.step_id,
+                            step.tool_id.as_str(),
+                            ShellToolRegistry::risk(step.tool_id).label()
+                        )),
+                        proposed_execpolicy_amendment: None,
+                    },
+                ));
+                break;
+            }
+
+            let invocation = ShellToolInvocation {
+                run_id: run.run_id,
+                invocation_id,
+                tool_id: step.tool_id,
+                requested_tier: policy_tier,
+            };
+            run.next_invocation_id = run.next_invocation_id.saturating_add(1);
+            self.dispatch_shell_runtime_action(ShellRuntimeAction::AppendLog(format!(
+                "ToolInvocationStarted run={} invocation={} tool={}",
+                invocation.run_id,
+                invocation.invocation_id,
+                invocation.tool_id.as_str()
+            )));
+            let result = self.execute_workflow_tool(invocation);
+            for log in &result.logs {
+                self.dispatch_shell_runtime_action(ShellRuntimeAction::AppendLog(log.clone()));
+            }
+            self.dispatch_shell_runtime_action(ShellRuntimeAction::AppendLog(format!(
+                "ToolResult run={} invocation={} tool={} status={:?}",
+                result.run_id,
+                result.invocation_id,
+                result.tool_id.as_str(),
+                result.status
+            )));
+            if !matches!(result.status, ShellToolInvocationStatus::Succeeded) {
+                run.status = WorkflowRunStatus::Failed;
+                break;
+            }
+            run.step_index = run.step_index.saturating_add(1);
+        }
+
+        self.workflow_run = Some(run);
+    }
+
+    fn handle_workflow_approval_decision(
+        &mut self,
+        decision: &ShellApprovalDecisionRecord,
+    ) -> bool {
+        if !Self::is_workflow_request_id(decision.request_id.as_str()) {
+            return false;
+        }
+
+        let Some(mut run) = self.workflow_run.take() else {
+            return false;
+        };
+        if !matches!(run.status, WorkflowRunStatus::AwaitingApproval)
+            || run.pending_request_id.as_deref() != Some(decision.request_id.as_str())
+        {
+            self.workflow_run = Some(run);
+            return false;
+        }
+
+        if matches!(decision.decision, ShellApprovalDecisionKind::Approved) {
+            if let (Some(tool_id), Some(invocation_id)) =
+                (run.pending_tool_id, run.pending_invocation_id)
+            {
+                let invocation = ShellToolInvocation {
+                    run_id: run.run_id,
+                    invocation_id,
+                    tool_id,
+                    requested_tier: self.current_policy_tier(),
+                };
+                let result = self.execute_workflow_tool(invocation);
+                for log in &result.logs {
+                    self.dispatch_shell_runtime_action(ShellRuntimeAction::AppendLog(log.clone()));
+                }
+                if matches!(result.status, ShellToolInvocationStatus::Succeeded) {
+                    run.step_index = run.step_index.saturating_add(1);
+                    run.status = WorkflowRunStatus::Running;
+                    run.pending_request_id = None;
+                    run.pending_tool_id = None;
+                    run.pending_invocation_id = None;
+                    self.workflow_run = Some(run);
+                    self.run_workflow_next_step();
+                    return true;
+                }
+            }
+            run.status = WorkflowRunStatus::Failed;
+        } else {
+            run.status = WorkflowRunStatus::Blocked;
+            self.dispatch_shell_runtime_action(ShellRuntimeAction::AppendLog(format!(
+                "Workflow approval denied for {}",
+                decision.request_id
+            )));
+        }
+        run.pending_request_id = None;
+        run.pending_tool_id = None;
+        run.pending_invocation_id = None;
+        self.workflow_run = Some(run);
+        true
+    }
+
+    fn shell_draw_height(terminal_height: u16, chat_desired_height: u16) -> u16 {
+        let desired_chat = chat_desired_height.max(SHELL_MIN_CHAT_HEIGHT);
+        let desired_shell_height = SHELL_TOP_BAR_HEIGHT
+            + SHELL_TAB_HEIGHT
+            + SHELL_OVERVIEW_HEIGHT
+            + desired_chat
+            + SHELL_ACTION_BAR_HEIGHT;
+        desired_shell_height.min(terminal_height)
     }
 
     fn handle_active_thread_event(&mut self, tui: &mut tui::Tui, event: Event) -> Result<()> {
@@ -2342,7 +3309,7 @@ impl App {
             Err(external_editor::EditorError::MissingEditor) => {
                 self.chat_widget
                     .add_to_history(history_cell::new_error_event(
-                    "Cannot open external editor: set $VISUAL or $EDITOR before starting Codex."
+                    "Cannot open external editor: set $VISUAL or $EDITOR before starting A-Eye."
                         .to_string(),
                 ));
                 self.reset_external_editor_state(tui);
@@ -2558,6 +3525,18 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn shell_draw_height_respects_min_chat_height() {
+        let height = App::shell_draw_height(80, 2);
+        assert_eq!(height, 19);
+    }
+
+    #[test]
+    fn shell_draw_height_clamps_to_terminal_height() {
+        let height = App::shell_draw_height(16, 40);
+        assert_eq!(height, 16);
+    }
+
     #[tokio::test]
     async fn enqueue_thread_event_does_not_block_when_channel_full() -> Result<()> {
         let mut app = make_test_app().await;
@@ -2644,6 +3623,9 @@ mod tests {
             primary_thread_id: None,
             primary_session_configured: None,
             pending_primary_events: VecDeque::new(),
+            shell: None,
+            workflow_run: None,
+            tool_execution_mode: ToolExecutionMode::Simulated,
         }
     }
 
@@ -2697,6 +3679,9 @@ mod tests {
                 primary_thread_id: None,
                 primary_session_configured: None,
                 pending_primary_events: VecDeque::new(),
+                shell: None,
+                workflow_run: None,
+                tool_execution_mode: ToolExecutionMode::Simulated,
             },
             rx,
             op_rx,

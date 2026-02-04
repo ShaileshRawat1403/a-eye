@@ -1,8 +1,10 @@
 pub mod aeye;
 pub mod debug_sandbox;
 mod exit_status;
+mod first_run_setup;
 pub mod login;
 mod mcp_cmd;
+mod model_setup;
 pub mod multitool;
 #[cfg(not(windows))]
 mod wsl_paths;

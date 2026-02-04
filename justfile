@@ -37,6 +37,14 @@ install:
     rustup show active-toolchain
     cargo fetch
 
+# Install `a-eye` quickly for local iteration (faster compile, slightly less optimized binary).
+dev-fast:
+    CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 cargo install --path cli --bin a-eye --locked --force
+
+# Install `a-eye` with maximum release optimization (slower compile, best runtime binary).
+release-max:
+    cargo install --path cli --bin a-eye --locked --force
+
 # Run `cargo nextest` since it's faster than `cargo test`, though including
 # --no-fail-fast is important to ensure all tests are run.
 #

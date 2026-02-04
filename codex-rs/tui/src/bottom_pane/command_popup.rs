@@ -321,6 +321,17 @@ mod tests {
     }
 
     #[test]
+    fn selecting_guide_by_exact_match() {
+        let mut popup = CommandPopup::new(Vec::new(), CommandPopupFlags::default());
+        popup.on_composer_text_change("/guide".to_string());
+
+        match popup.selected_item() {
+            Some(CommandItem::Builtin(cmd)) => assert_eq!(cmd.command(), "guide"),
+            other => panic!("expected /guide to be selected, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn filtered_commands_keep_presentation_order_for_prefix() {
         let mut popup = CommandPopup::new(Vec::new(), CommandPopupFlags::default());
         popup.on_composer_text_change("/m".to_string());
