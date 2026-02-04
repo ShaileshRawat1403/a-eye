@@ -686,6 +686,7 @@ struct WorkflowRun {
     pending_request_id: Option<String>,
     pending_tool_id: Option<ShellToolId>,
     pending_invocation_id: Option<u64>,
+    blocked_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2464,6 +2465,13 @@ impl App {
                 self.chat_widget
                     .submit_user_message_with_mode(text, collaboration_mode);
             }
+            AppEvent::ResumeWorkflow { run_id } => {
+                if !self.resume_workflow_run(run_id) {
+                    self.dispatch_shell_runtime_action(ShellRuntimeAction::AppendLog(format!(
+                        "Workflow run {run_id} is not resumable"
+                    )));
+                }
+            }
             AppEvent::ManageSkillsClosed => {
                 self.chat_widget.handle_manage_skills_closed();
             }
@@ -2839,6 +2847,7 @@ impl App {
             ShellPersistedShellEvent::WorkflowRunStarted { .. }
             | ShellPersistedShellEvent::ToolInvocationIssued { .. }
             | ShellPersistedShellEvent::ApprovalRequested { .. }
+            | ShellPersistedShellEvent::WorkflowResumed { .. }
             | ShellPersistedShellEvent::PolicyChanged { .. }
             | ShellPersistedShellEvent::PersonaPolicyChanged { .. } => false,
         };
@@ -2871,6 +2880,7 @@ impl App {
             pending_tool_id: run.pending_tool_id.map(|tool| tool.as_str().to_string()),
             pending_invocation_id: run.pending_invocation_id,
             next_invocation_id: run.next_invocation_id,
+            blocked_reason: run.blocked_reason.clone(),
         }
     }
 
@@ -2936,9 +2946,31 @@ impl App {
             }
         };
 
-        let Some(run) = restored else {
+        let Some(mut run) = restored else {
             return;
         };
+        if matches!(run.status, ShellPersistedWorkflowStatus::Running) {
+            run.status = ShellPersistedWorkflowStatus::Blocked;
+            run.blocked_reason = Some("interrupted".to_string());
+            self.append_shell_persisted_event(ShellPersistedShellEvent::WorkflowStatusChanged {
+                run_id: run.run_id,
+                status: ShellPersistedWorkflowStatus::Blocked,
+                step_index: run.step_index,
+                reason: Some("interrupted".to_string()),
+            });
+        }
+        if matches!(run.status, ShellPersistedWorkflowStatus::AwaitingApproval)
+            && run.pending_request_id.is_none()
+        {
+            run.status = ShellPersistedWorkflowStatus::Blocked;
+            run.blocked_reason = Some("interrupted".to_string());
+            self.append_shell_persisted_event(ShellPersistedShellEvent::WorkflowStatusChanged {
+                run_id: run.run_id,
+                status: ShellPersistedWorkflowStatus::Blocked,
+                step_index: run.step_index,
+                reason: Some("interrupted".to_string()),
+            });
+        }
         let Some(template_id) = Self::workflow_template_id_from_persisted(run.template_id.as_str())
         else {
             tracing::warn!(
@@ -2962,6 +2994,7 @@ impl App {
             pending_request_id: run.pending_request_id,
             pending_tool_id,
             pending_invocation_id: run.pending_invocation_id,
+            blocked_reason: run.blocked_reason,
         });
         if let Some(workflow_run) = self.workflow_run.as_ref() {
             self.dispatch_shell_runtime_action(ShellRuntimeAction::AppendLog(format!(
@@ -3150,6 +3183,7 @@ impl App {
             pending_request_id: None,
             pending_tool_id: None,
             pending_invocation_id: None,
+            blocked_reason: None,
         };
         self.append_shell_persisted_event(ShellPersistedShellEvent::WorkflowRunStarted {
             run_id: workflow_run.run_id,
@@ -3163,6 +3197,36 @@ impl App {
             "Workflow run {run_id} started"
         )));
         self.run_workflow_next_step();
+    }
+
+    fn resume_workflow_run(&mut self, run_id: u64) -> bool {
+        let Some(mut run) = self.workflow_run.take() else {
+            return false;
+        };
+        if run.run_id != run_id
+            || !matches!(run.status, WorkflowRunStatus::Blocked)
+            || run.blocked_reason.as_deref() != Some("interrupted")
+        {
+            self.workflow_run = Some(run);
+            return false;
+        }
+
+        run.status = WorkflowRunStatus::Running;
+        run.blocked_reason = None;
+        self.append_shell_persisted_event(ShellPersistedShellEvent::WorkflowResumed { run_id });
+        self.append_shell_persisted_event(ShellPersistedShellEvent::WorkflowStatusChanged {
+            run_id,
+            status: Self::persisted_workflow_status(run.status),
+            step_index: run.step_index,
+            reason: Some("resume_requested".to_string()),
+        });
+        self.dispatch_shell_runtime_action(ShellRuntimeAction::AppendLog(format!(
+            "Workflow resumed after restart at step {}",
+            run.step_index
+        )));
+        self.workflow_run = Some(run);
+        self.run_workflow_next_step();
+        true
     }
 
     fn execute_workflow_tool(
@@ -3293,6 +3357,7 @@ impl App {
             let template = shell_workflow_template(run.template_id);
             if run.step_index >= template.steps.len() {
                 run.status = WorkflowRunStatus::Completed;
+                run.blocked_reason = None;
                 self.append_shell_persisted_event(
                     ShellPersistedShellEvent::WorkflowStatusChanged {
                         run_id: run.run_id,
@@ -3316,6 +3381,7 @@ impl App {
             if outcome.blocked || matches!(outcome.requirement, ShellApprovalGateRequirement::Deny)
             {
                 run.status = WorkflowRunStatus::Blocked;
+                run.blocked_reason = Some(outcome.reason.to_string());
                 self.append_shell_persisted_event(
                     ShellPersistedShellEvent::WorkflowStatusChanged {
                         run_id: run.run_id,
@@ -3343,6 +3409,7 @@ impl App {
                 );
                 run.next_invocation_id = run.next_invocation_id.saturating_add(1);
                 run.status = WorkflowRunStatus::AwaitingApproval;
+                run.blocked_reason = None;
                 run.pending_request_id = Some(request_id.clone());
                 run.pending_tool_id = Some(step.tool_id);
                 run.pending_invocation_id = Some(invocation_id);
@@ -3423,6 +3490,7 @@ impl App {
             });
             if !matches!(result.status, ShellToolInvocationStatus::Succeeded) {
                 run.status = WorkflowRunStatus::Failed;
+                run.blocked_reason = Some("tool_failed".to_string());
                 self.append_shell_persisted_event(
                     ShellPersistedShellEvent::WorkflowStatusChanged {
                         run_id: run.run_id,
@@ -3491,6 +3559,7 @@ impl App {
                 if matches!(result.status, ShellToolInvocationStatus::Succeeded) {
                     run.step_index = run.step_index.saturating_add(1);
                     run.status = WorkflowRunStatus::Running;
+                    run.blocked_reason = None;
                     self.append_shell_persisted_event(
                         ShellPersistedShellEvent::WorkflowStatusChanged {
                             run_id: run.run_id,
@@ -3508,6 +3577,7 @@ impl App {
                 }
             }
             run.status = WorkflowRunStatus::Failed;
+            run.blocked_reason = Some("approved_tool_failed".to_string());
             self.append_shell_persisted_event(ShellPersistedShellEvent::WorkflowStatusChanged {
                 run_id: run.run_id,
                 status: Self::persisted_workflow_status(run.status),
@@ -3516,6 +3586,7 @@ impl App {
             });
         } else {
             run.status = WorkflowRunStatus::Blocked;
+            run.blocked_reason = Some("approval_denied".to_string());
             self.append_shell_persisted_event(ShellPersistedShellEvent::ApprovalResolved {
                 request_id: decision.request_id.clone(),
                 run_id: decision.run_id,
@@ -4058,6 +4129,14 @@ mod tests {
         )
     }
 
+    fn persisted_persona_policy() -> ShellPersistedPersonaPolicy {
+        ShellPersistedPersonaPolicy {
+            tier_ceiling: "balanced".to_string(),
+            explanation_depth: "detailed".to_string(),
+            output_format: "impact-first".to_string(),
+        }
+    }
+
     fn all_model_presets() -> Vec<ModelPreset> {
         codex_core::models_manager::model_presets::all_model_presets().clone()
     }
@@ -4549,5 +4628,237 @@ mod tests {
 
         assert!(app.handle_workflow_approval_decision(&decision));
         assert!(!app.handle_workflow_approval_decision(&decision));
+    }
+
+    #[tokio::test]
+    async fn restore_marks_running_workflow_as_interrupted() {
+        let mut app = make_test_app().await;
+        let dir = tempdir().expect("tmpdir");
+        let path = dir.path().join("workflow-events.jsonl");
+        let mut store = ShellEventStore::open(path.clone()).expect("open event store");
+        store
+            .append(ShellPersistedShellEvent::WorkflowRunStarted {
+                run_id: 41,
+                template_id: "scan_plan_diff_verify".to_string(),
+                execution_mode: ShellPersistedExecutionMode::Simulated,
+                policy_tier: "balanced".to_string(),
+                persona_policy: persisted_persona_policy(),
+            })
+            .expect("append start");
+        store
+            .append(ShellPersistedShellEvent::ToolResultRecorded {
+                run_id: 41,
+                invocation_id: 1,
+                tool_id: "scan_repo".to_string(),
+                status: "succeeded".to_string(),
+            })
+            .expect("append tool result");
+        app.shell_event_store = Some(store);
+
+        app.restore_shell_workflow_state();
+
+        let run = app.workflow_run.as_ref().expect("restored workflow");
+        assert_eq!(run.run_id, 41);
+        assert_eq!(run.step_index, 1);
+        assert_eq!(run.status, WorkflowRunStatus::Blocked);
+        assert_eq!(run.blocked_reason.as_deref(), Some("interrupted"));
+
+        let restored_store = ShellEventStore::open(path).expect("reopen event store");
+        let records = restored_store.load().expect("load records");
+        let last = records.last().expect("expected interruption status");
+        assert_eq!(
+            last.event,
+            ShellPersistedShellEvent::WorkflowStatusChanged {
+                run_id: 41,
+                status: ShellPersistedWorkflowStatus::Blocked,
+                step_index: 1,
+                reason: Some("interrupted".to_string()),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_awaiting_approval_keeps_pending_request() {
+        let mut app = make_test_app().await;
+        let dir = tempdir().expect("tmpdir");
+        let path = dir.path().join("workflow-events.jsonl");
+        let mut store = ShellEventStore::open(path.clone()).expect("open event store");
+        store
+            .append(ShellPersistedShellEvent::WorkflowRunStarted {
+                run_id: 51,
+                template_id: "scan_plan_diff_verify".to_string(),
+                execution_mode: ShellPersistedExecutionMode::Simulated,
+                policy_tier: "balanced".to_string(),
+                persona_policy: persisted_persona_policy(),
+            })
+            .expect("append start");
+        store
+            .append(ShellPersistedShellEvent::ApprovalRequested {
+                request_id: "wf:51:3:verify".to_string(),
+                run_id: 51,
+                invocation_id: 3,
+                tool_id: "verify".to_string(),
+                risk: "execution".to_string(),
+                preview: "workflow-tool verify".to_string(),
+            })
+            .expect("append approval request");
+        app.shell_event_store = Some(store);
+
+        app.restore_shell_workflow_state();
+
+        let run = app.workflow_run.as_ref().expect("restored workflow");
+        assert_eq!(run.status, WorkflowRunStatus::AwaitingApproval);
+        assert_eq!(run.pending_request_id.as_deref(), Some("wf:51:3:verify"));
+        assert_eq!(run.pending_tool_id, Some(ShellToolId::Verify));
+        assert_eq!(run.pending_invocation_id, Some(3));
+        assert!(run.blocked_reason.is_none());
+
+        let restored_store = ShellEventStore::open(path).expect("reopen event store");
+        let records = restored_store.load().expect("load records");
+        assert_eq!(records.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn restore_does_not_execute_workflow_until_explicit_resume() {
+        let mut app = make_test_app().await;
+        let dir = tempdir().expect("tmpdir");
+        let path = dir.path().join("workflow-events.jsonl");
+        let mut store = ShellEventStore::open(path.clone()).expect("open event store");
+        store
+            .append(ShellPersistedShellEvent::WorkflowRunStarted {
+                run_id: 61,
+                template_id: "scan_plan_diff_verify".to_string(),
+                execution_mode: ShellPersistedExecutionMode::Simulated,
+                policy_tier: "balanced".to_string(),
+                persona_policy: persisted_persona_policy(),
+            })
+            .expect("append start");
+        app.shell_event_store = Some(store);
+
+        app.restore_shell_workflow_state();
+
+        let run = app.workflow_run.as_ref().expect("restored workflow");
+        assert_eq!(run.status, WorkflowRunStatus::Blocked);
+        assert_eq!(run.step_index, 0);
+
+        let restored_store = ShellEventStore::open(path).expect("reopen event store");
+        let records = restored_store.load().expect("load records");
+        assert_eq!(records.len(), 2);
+        assert_eq!(
+            records[1].event,
+            ShellPersistedShellEvent::WorkflowStatusChanged {
+                run_id: 61,
+                status: ShellPersistedWorkflowStatus::Blocked,
+                step_index: 0,
+                reason: Some("interrupted".to_string()),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn resume_workflow_continues_from_restored_step() {
+        let mut app = make_test_app().await;
+        app.chat_widget.set_approval_policy(AskForApproval::Never);
+        let dir = tempdir().expect("tmpdir");
+        let path = dir.path().join("workflow-events.jsonl");
+        let mut store = ShellEventStore::open(path.clone()).expect("open event store");
+        store
+            .append(ShellPersistedShellEvent::WorkflowRunStarted {
+                run_id: 71,
+                template_id: "scan_plan_diff_verify".to_string(),
+                execution_mode: ShellPersistedExecutionMode::Simulated,
+                policy_tier: "balanced".to_string(),
+                persona_policy: persisted_persona_policy(),
+            })
+            .expect("append start");
+        store
+            .append(ShellPersistedShellEvent::ToolResultRecorded {
+                run_id: 71,
+                invocation_id: 1,
+                tool_id: "scan_repo".to_string(),
+                status: "succeeded".to_string(),
+            })
+            .expect("append tool result");
+        app.shell_event_store = Some(store);
+
+        app.restore_shell_workflow_state();
+        assert!(app.resume_workflow_run(71));
+
+        let run = app.workflow_run.as_ref().expect("workflow run");
+        assert_eq!(run.run_id, 71);
+        assert!(
+            matches!(
+                run.status,
+                WorkflowRunStatus::Running
+                    | WorkflowRunStatus::AwaitingApproval
+                    | WorkflowRunStatus::Completed
+            ),
+            "resumed run should continue from interrupted state"
+        );
+        assert!(
+            run.step_index >= 2,
+            "resumed run should advance past step 1"
+        );
+
+        let restored_store = ShellEventStore::open(path).expect("reopen event store");
+        let records = restored_store.load().expect("load records");
+        assert!(
+            records.iter().any(|record| {
+                record.event == ShellPersistedShellEvent::WorkflowResumed { run_id: 71 }
+            }),
+            "expected workflow resumed event"
+        );
+        assert!(
+            records.iter().any(|record| {
+                record.event
+                    == ShellPersistedShellEvent::ToolInvocationIssued {
+                        run_id: 71,
+                        invocation_id: 2,
+                        tool_id: "generate_plan".to_string(),
+                    }
+            }),
+            "expected resumed execution to continue at invocation_id=2"
+        );
+    }
+
+    #[tokio::test]
+    async fn completed_workflow_cannot_be_resumed() {
+        let mut app = make_test_app().await;
+        let dir = tempdir().expect("tmpdir");
+        let path = dir.path().join("workflow-events.jsonl");
+        let mut store = ShellEventStore::open(path.clone()).expect("open event store");
+        store
+            .append(ShellPersistedShellEvent::WorkflowRunStarted {
+                run_id: 81,
+                template_id: "scan_plan_diff_verify".to_string(),
+                execution_mode: ShellPersistedExecutionMode::Simulated,
+                policy_tier: "balanced".to_string(),
+                persona_policy: persisted_persona_policy(),
+            })
+            .expect("append start");
+        store
+            .append(ShellPersistedShellEvent::WorkflowStatusChanged {
+                run_id: 81,
+                status: ShellPersistedWorkflowStatus::Completed,
+                step_index: 4,
+                reason: Some("workflow_complete".to_string()),
+            })
+            .expect("append completed");
+        app.shell_event_store = Some(store);
+
+        app.restore_shell_workflow_state();
+        assert!(!app.resume_workflow_run(81));
+        let run = app.workflow_run.as_ref().expect("restored workflow");
+        assert_eq!(run.status, WorkflowRunStatus::Completed);
+        assert_eq!(run.step_index, 4);
+
+        let restored_store = ShellEventStore::open(path).expect("reopen event store");
+        let records = restored_store.load().expect("load records");
+        assert!(
+            !records.iter().any(|record| {
+                record.event == ShellPersistedShellEvent::WorkflowResumed { run_id: 81 }
+            }),
+            "completed workflow should not emit resume events"
+        );
     }
 }

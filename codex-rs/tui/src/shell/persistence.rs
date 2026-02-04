@@ -66,6 +66,9 @@ pub(crate) enum PersistedShellEvent {
         run_id: u64,
         decision: String,
     },
+    WorkflowResumed {
+        run_id: u64,
+    },
     PolicyChanged {
         tier: String,
         source: String,
@@ -178,6 +181,7 @@ pub(crate) struct ReplayedWorkflowRun {
     pub(crate) pending_tool_id: Option<String>,
     pub(crate) pending_invocation_id: Option<u64>,
     pub(crate) next_invocation_id: u64,
+    pub(crate) blocked_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -219,19 +223,21 @@ pub(crate) fn replay_workflow_from(
                     pending_tool_id: None,
                     pending_invocation_id: None,
                     next_invocation_id: 1,
+                    blocked_reason: None,
                 });
             }
             PersistedShellEvent::WorkflowStatusChanged {
                 run_id,
                 status,
                 step_index,
-                ..
+                reason,
             } => {
                 if let Some(run) = latest.as_mut()
                     && run.run_id == run_id
                 {
                     run.status = status;
                     run.step_index = step_index;
+                    run.blocked_reason = reason;
                     if !matches!(status, PersistedWorkflowStatus::AwaitingApproval) {
                         run.pending_request_id = None;
                         run.pending_tool_id = None;
@@ -259,6 +265,7 @@ pub(crate) fn replay_workflow_from(
                     && run.run_id == run_id
                 {
                     run.status = PersistedWorkflowStatus::AwaitingApproval;
+                    run.blocked_reason = None;
                     run.pending_request_id = Some(request_id);
                     run.pending_tool_id = Some(tool_id);
                     run.pending_invocation_id = Some(invocation_id);
@@ -279,6 +286,18 @@ pub(crate) fn replay_workflow_from(
                     } else {
                         run.status = PersistedWorkflowStatus::Blocked;
                     }
+                    run.blocked_reason = None;
+                    run.pending_request_id = None;
+                    run.pending_tool_id = None;
+                    run.pending_invocation_id = None;
+                }
+            }
+            PersistedShellEvent::WorkflowResumed { run_id } => {
+                if let Some(run) = latest.as_mut()
+                    && run.run_id == run_id
+                {
+                    run.status = PersistedWorkflowStatus::Running;
+                    run.blocked_reason = None;
                     run.pending_request_id = None;
                     run.pending_tool_id = None;
                     run.pending_invocation_id = None;

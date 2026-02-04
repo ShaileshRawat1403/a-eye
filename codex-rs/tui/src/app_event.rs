@@ -276,6 +276,11 @@ pub(crate) enum AppEvent {
     /// Open the approval popup.
     FullScreenApprovalRequest(ApprovalRequest),
 
+    /// Resume an interrupted workflow run.
+    ResumeWorkflow {
+        run_id: u64,
+    },
+
     /// Open the feedback note entry overlay after the user selects a category.
     OpenFeedbackNote {
         category: FeedbackCategory,
