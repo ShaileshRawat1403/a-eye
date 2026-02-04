@@ -426,11 +426,28 @@ pub(crate) struct ShellInteraction {
 #[derive(Debug, Clone)]
 pub(crate) struct SubjectMatterState {
     pub(crate) personality: Personality,
+    pub(crate) persona_policy_defaults: PersonaPolicy,
+    pub(crate) persona_policy_overrides: PersonaPolicyOverrides,
     pub(crate) persona_policy: PersonaPolicy,
     pub(crate) skills_enabled_count: usize,
     pub(crate) collaboration_mode_label: Arc<str>,
     pub(crate) model_slug: Option<Arc<str>>,
     pub(crate) reasoning_effort: Option<ReasoningEffort>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct PersonaPolicyOverrides {
+    pub(crate) tier_ceiling: Option<PolicyTier>,
+    pub(crate) explanation_depth: Option<ExplanationDepth>,
+    pub(crate) output_format: Option<PersonaOutputFormat>,
+}
+
+impl PersonaPolicyOverrides {
+    pub(crate) fn is_empty(self) -> bool {
+        self.tier_ceiling.is_none()
+            && self.explanation_depth.is_none()
+            && self.output_format.is_none()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -470,6 +487,7 @@ pub(crate) struct PersonaPolicy {
     pub(crate) tier_ceiling: PolicyTier,
     pub(crate) explanation_depth: ExplanationDepth,
     pub(crate) output_format: PersonaOutputFormat,
+    pub(crate) tab_order: &'static [ShellTab],
     pub(crate) visible_tools: &'static [&'static str],
 }
 
@@ -764,6 +782,22 @@ pub(crate) struct ShellState {
 
 const FRIENDLY_VISIBLE_TOOLS: &[&str] = &["scan_repo", "generate_plan", "verify"];
 const PRAGMATIC_VISIBLE_TOOLS: &[&str] = &["scan_repo", "generate_plan", "compute_diff", "verify"];
+const FRIENDLY_TAB_ORDER: &[ShellTab] = &[
+    ShellTab::Overview,
+    ShellTab::Plan,
+    ShellTab::Explain,
+    ShellTab::Diff,
+    ShellTab::Logs,
+    ShellTab::System,
+];
+const PRAGMATIC_TAB_ORDER: &[ShellTab] = &[
+    ShellTab::Diff,
+    ShellTab::Logs,
+    ShellTab::Plan,
+    ShellTab::System,
+    ShellTab::Explain,
+    ShellTab::Overview,
+];
 
 pub(crate) fn persona_policy_for(personality: Personality) -> PersonaPolicy {
     match personality {
@@ -771,19 +805,38 @@ pub(crate) fn persona_policy_for(personality: Personality) -> PersonaPolicy {
             tier_ceiling: PolicyTier::Balanced,
             explanation_depth: ExplanationDepth::Detailed,
             output_format: PersonaOutputFormat::ImpactFirst,
+            tab_order: FRIENDLY_TAB_ORDER,
             visible_tools: FRIENDLY_VISIBLE_TOOLS,
         },
         Personality::Pragmatic => PersonaPolicy {
             tier_ceiling: PolicyTier::Permissive,
             explanation_depth: ExplanationDepth::Brief,
             output_format: PersonaOutputFormat::TechnicalFirst,
+            tab_order: PRAGMATIC_TAB_ORDER,
             visible_tools: PRAGMATIC_VISIBLE_TOOLS,
         },
     }
 }
 
+pub(crate) fn apply_persona_policy_overrides(
+    defaults: PersonaPolicy,
+    overrides: PersonaPolicyOverrides,
+) -> PersonaPolicy {
+    PersonaPolicy {
+        tier_ceiling: overrides.tier_ceiling.unwrap_or(defaults.tier_ceiling),
+        explanation_depth: overrides
+            .explanation_depth
+            .unwrap_or(defaults.explanation_depth),
+        output_format: overrides.output_format.unwrap_or(defaults.output_format),
+        tab_order: defaults.tab_order,
+        visible_tools: defaults.visible_tools,
+    }
+}
+
 impl ShellState {
     pub(crate) fn new(project_name: String, personality: Personality) -> Self {
+        let persona_policy_defaults = persona_policy_for(personality);
+        let persona_policy_overrides = PersonaPolicyOverrides::default();
         Self {
             header: ShellHeader {
                 project_name: project_name.into(),
@@ -795,7 +848,7 @@ impl ShellState {
             },
             routing: ShellRouting {
                 journey: JourneyStep::Idea,
-                tab: ShellTab::Overview,
+                tab: persona_policy_defaults.tab_order[0],
             },
             journey_status: JourneyStatus {
                 state: JourneyState::Idle,
@@ -809,7 +862,12 @@ impl ShellState {
             },
             sm: SubjectMatterState {
                 personality,
-                persona_policy: persona_policy_for(personality),
+                persona_policy_defaults,
+                persona_policy_overrides,
+                persona_policy: apply_persona_policy_overrides(
+                    persona_policy_defaults,
+                    persona_policy_overrides,
+                ),
                 skills_enabled_count: 0,
                 collaboration_mode_label: "code".into(),
                 model_slug: None,
@@ -855,6 +913,45 @@ impl ShellState {
             )
             .max(self.journey_status.active_run_id)
     }
+
+    pub(crate) fn ordered_tabs(&self) -> &'static [ShellTab] {
+        self.sm.persona_policy.tab_order
+    }
+
+    pub(crate) fn next_tab(&self) -> ShellTab {
+        next_tab_from(self.routing.tab, self.ordered_tabs())
+    }
+
+    pub(crate) fn prev_tab(&self) -> ShellTab {
+        prev_tab_from(self.routing.tab, self.ordered_tabs())
+    }
+}
+
+fn next_tab_from(current: ShellTab, order: &[ShellTab]) -> ShellTab {
+    if order.is_empty() {
+        return current;
+    }
+
+    if let Some((idx, _)) = order.iter().enumerate().find(|(_, tab)| **tab == current) {
+        return order[(idx + 1) % order.len()];
+    }
+
+    order[0]
+}
+
+fn prev_tab_from(current: ShellTab, order: &[ShellTab]) -> ShellTab {
+    if order.is_empty() {
+        return current;
+    }
+
+    if let Some((idx, _)) = order.iter().enumerate().find(|(_, tab)| **tab == current) {
+        if idx == 0 {
+            return order[order.len().saturating_sub(1)];
+        }
+        return order[idx - 1];
+    }
+
+    order[0]
 }
 
 #[derive(Debug, Clone, Copy)]

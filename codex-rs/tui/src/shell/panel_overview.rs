@@ -73,6 +73,14 @@ pub(crate) fn render(area: Rect, buffer: &mut Buffer, state: &ShellState) {
                     " • Format: ".dim(),
                     state.sm.persona_policy.output_format.label().into(),
                 ]),
+                Line::from(vec![
+                    "Policy source: ".dim(),
+                    if state.sm.persona_policy_overrides.is_empty() {
+                        "defaults".into()
+                    } else {
+                        "defaults+overrides".magenta()
+                    },
+                ]),
             ]
         }
         ShellTab::System => render_system(state),
@@ -170,35 +178,57 @@ fn render_diff(state: &ShellState) -> Vec<Line<'static>> {
 }
 
 fn render_explain(state: &ShellState) -> Vec<Line<'static>> {
-    let mut explanation = String::new();
-
-    if let Some(verify) = state.artifacts.verify.as_ref() {
+    let summary = if let Some(verify) = state.artifacts.verify.as_ref() {
         match verify.overall {
             super::shell_state::VerifyOverall::Passing => {
-                explanation = "Verification passed. Changes look healthy.".to_string();
+                "Verification passed. Changes look healthy.".to_string()
             }
             super::shell_state::VerifyOverall::Failing => {
-                explanation =
-                    "Verification failed. Review logs and selected diff file.".to_string();
+                "Verification failed. Review logs and selected diff file.".to_string()
             }
-            super::shell_state::VerifyOverall::Unknown => {}
+            super::shell_state::VerifyOverall::Unknown => {
+                "Verification is pending. Review checks and logs.".to_string()
+            }
         }
-    }
-
-    if explanation.is_empty()
-        && let Some(plan) = state.artifacts.plan.as_ref()
-    {
-        explanation = format!(
+    } else if let Some(plan) = state.artifacts.plan.as_ref() {
+        format!(
             "Planned {} steps. Review selected step for next action.",
             plan.steps.len()
-        );
-    }
+        )
+    } else {
+        "Explanation will appear once artifacts are available.".to_string()
+    };
 
-    if explanation.is_empty() {
-        explanation = "Explanation will appear once artifacts are available.".to_string();
-    }
+    let framing = match state.sm.persona_policy.output_format {
+        super::shell_state::PersonaOutputFormat::ImpactFirst => "Impact",
+        super::shell_state::PersonaOutputFormat::TechnicalFirst => "Technical state",
+    };
 
-    vec![Line::from(explanation)]
+    match state.sm.persona_policy.explanation_depth {
+        super::shell_state::ExplanationDepth::Brief => {
+            vec![Line::from(format!("{framing}: {summary}"))]
+        }
+        super::shell_state::ExplanationDepth::Standard => vec![
+            Line::from(format!("{framing}: {summary}")),
+            Line::from(format!("Journey: {}", state.journey_status.state.label())),
+        ],
+        super::shell_state::ExplanationDepth::Detailed => vec![
+            Line::from(format!("{framing}: {summary}")),
+            Line::from(format!(
+                "Journey: {} • Step: {} • Run: {}",
+                state.journey_status.state.label(),
+                state.journey_status.step.label(),
+                state.journey_status.active_run_id
+            )),
+            Line::from(format!(
+                "Artifacts: system={} plan={} diff={} verify={}",
+                state.artifacts.system.is_some() as u8,
+                state.artifacts.plan.is_some() as u8,
+                state.artifacts.diff.is_some() as u8,
+                state.artifacts.verify.is_some() as u8
+            )),
+        ],
+    }
 }
 
 fn render_logs(state: &ShellState) -> Vec<Line<'static>> {

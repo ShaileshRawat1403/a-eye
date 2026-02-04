@@ -14,11 +14,13 @@ use super::shell_state::ApprovalRiskClass;
 use super::shell_state::ClearReason;
 use super::shell_state::DiffArtifact;
 use super::shell_state::ErrorKind;
+use super::shell_state::ExplanationDepth;
 use super::shell_state::JourneyError;
 use super::shell_state::JourneyState;
 use super::shell_state::JourneyStep;
 use super::shell_state::LogEntry;
 use super::shell_state::LogLevel;
+use super::shell_state::PersonaOutputFormat;
 use super::shell_state::PlanArtifact;
 use super::shell_state::PolicyTier;
 use super::shell_state::RiskLevel;
@@ -93,6 +95,10 @@ pub(crate) enum RuntimeAction {
     SetVerifyStatus(VerifyStatus),
     SetRiskLevel(RiskLevel),
     SetPersonality(Personality),
+    SetPersonaTierCeilingOverride(Option<PolicyTier>),
+    SetPersonaExplanationDepthOverride(Option<ExplanationDepth>),
+    SetPersonaOutputFormatOverride(Option<PersonaOutputFormat>),
+    ClearPersonaPolicyOverrides,
     SetSkillsEnabledCount(usize),
     SetCollaborationModeLabel(String),
     SetModelSlug(Option<String>),

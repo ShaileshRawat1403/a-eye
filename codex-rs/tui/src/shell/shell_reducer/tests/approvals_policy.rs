@@ -238,3 +238,85 @@ fn persona_update_applies_persona_policy_defaults() {
         &["scan_repo", "generate_plan", "compute_diff", "verify"]
     );
 }
+
+#[test]
+fn persona_policy_overrides_apply_and_persist_across_personality_changes() {
+    let mut state = state();
+
+    run_runtime(
+        &mut state,
+        RuntimeAction::SetPersonaTierCeilingOverride(Some(PolicyTier::Strict)),
+    );
+    run_runtime(
+        &mut state,
+        RuntimeAction::SetPersonaExplanationDepthOverride(Some(ExplanationDepth::Brief)),
+    );
+    run_runtime(
+        &mut state,
+        RuntimeAction::SetPersonaOutputFormatOverride(Some(PersonaOutputFormat::TechnicalFirst)),
+    );
+
+    assert_eq!(state.sm.persona_policy.tier_ceiling, PolicyTier::Strict);
+    assert_eq!(
+        state.sm.persona_policy.explanation_depth,
+        ExplanationDepth::Brief
+    );
+    assert_eq!(
+        state.sm.persona_policy.output_format,
+        PersonaOutputFormat::TechnicalFirst
+    );
+
+    run_runtime(
+        &mut state,
+        RuntimeAction::SetPersonality(Personality::Pragmatic),
+    );
+
+    assert_eq!(
+        state.sm.persona_policy_defaults.tier_ceiling,
+        PolicyTier::Permissive
+    );
+    assert_eq!(state.sm.persona_policy.tier_ceiling, PolicyTier::Strict);
+    assert_eq!(
+        state.sm.persona_policy.explanation_depth,
+        ExplanationDepth::Brief
+    );
+    assert_eq!(
+        state.sm.persona_policy.output_format,
+        PersonaOutputFormat::TechnicalFirst
+    );
+}
+
+#[test]
+fn clearing_persona_policy_overrides_restores_personality_defaults() {
+    let mut state = state();
+
+    run_runtime(
+        &mut state,
+        RuntimeAction::SetPersonaTierCeilingOverride(Some(PolicyTier::Strict)),
+    );
+    run_runtime(
+        &mut state,
+        RuntimeAction::SetPersonaExplanationDepthOverride(Some(ExplanationDepth::Brief)),
+    );
+    run_runtime(
+        &mut state,
+        RuntimeAction::SetPersonaOutputFormatOverride(Some(PersonaOutputFormat::TechnicalFirst)),
+    );
+    assert!(!state.sm.persona_policy_overrides.is_empty());
+
+    run_runtime(&mut state, RuntimeAction::ClearPersonaPolicyOverrides);
+
+    assert!(state.sm.persona_policy_overrides.is_empty());
+    assert_eq!(
+        state.sm.persona_policy.tier_ceiling,
+        state.sm.persona_policy_defaults.tier_ceiling
+    );
+    assert_eq!(
+        state.sm.persona_policy.explanation_depth,
+        state.sm.persona_policy_defaults.explanation_depth
+    );
+    assert_eq!(
+        state.sm.persona_policy.output_format,
+        state.sm.persona_policy_defaults.output_format
+    );
+}

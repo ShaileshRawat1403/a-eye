@@ -19,6 +19,7 @@ use super::shell_state::LogEntry;
 use super::shell_state::LogLevel;
 use super::shell_state::LogSource;
 use super::shell_state::PendingApproval;
+use super::shell_state::PersonaPolicyOverrides;
 use super::shell_state::PlanArtifact;
 use super::shell_state::PlanStep;
 use super::shell_state::PolicyGateState;
@@ -26,6 +27,7 @@ use super::shell_state::ShellOverlay;
 use super::shell_state::ShellState;
 use super::shell_state::StepStatus;
 use super::shell_state::SystemArtifact;
+use super::shell_state::apply_persona_policy_overrides;
 use super::shell_state::artifact_is_newer;
 use super::shell_state::derive_journey;
 use super::shell_state::persona_policy_for;
@@ -66,11 +68,11 @@ fn reduce_user(state: &mut ShellState, action: UserAction) -> Vec<UiEffect> {
             vec![UiEffect::RequestFrame]
         }
         UserAction::NextTab => {
-            state.routing.tab = state.routing.tab.next();
+            state.routing.tab = state.next_tab();
             vec![UiEffect::RequestFrame]
         }
         UserAction::PrevTab => {
-            state.routing.tab = state.routing.tab.prev();
+            state.routing.tab = state.prev_tab();
             vec![UiEffect::RequestFrame]
         }
         UserAction::SelectTab(tab) => {
@@ -240,7 +242,24 @@ fn reduce_runtime(state: &mut ShellState, action: RuntimeAction) {
         }
         RuntimeAction::SetPersonality(personality) => {
             state.sm.personality = personality;
-            state.sm.persona_policy = persona_policy_for(personality);
+            state.sm.persona_policy_defaults = persona_policy_for(personality);
+            refresh_persona_policy(state);
+        }
+        RuntimeAction::SetPersonaTierCeilingOverride(tier_ceiling) => {
+            state.sm.persona_policy_overrides.tier_ceiling = tier_ceiling;
+            refresh_persona_policy(state);
+        }
+        RuntimeAction::SetPersonaExplanationDepthOverride(explanation_depth) => {
+            state.sm.persona_policy_overrides.explanation_depth = explanation_depth;
+            refresh_persona_policy(state);
+        }
+        RuntimeAction::SetPersonaOutputFormatOverride(output_format) => {
+            state.sm.persona_policy_overrides.output_format = output_format;
+            refresh_persona_policy(state);
+        }
+        RuntimeAction::ClearPersonaPolicyOverrides => {
+            state.sm.persona_policy_overrides = PersonaPolicyOverrides::default();
+            refresh_persona_policy(state);
         }
         RuntimeAction::SetSkillsEnabledCount(count) => {
             state.sm.skills_enabled_count = count;
@@ -650,6 +669,13 @@ fn recompute_journey(state: &mut ShellState) {
     state.journey_status.step = projection.step;
     state.journey_status.active_run_id = projection.active_run_id;
     state.routing.journey = projection.step;
+}
+
+fn refresh_persona_policy(state: &mut ShellState) {
+    state.sm.persona_policy = apply_persona_policy_overrides(
+        state.sm.persona_policy_defaults,
+        state.sm.persona_policy_overrides,
+    );
 }
 
 fn next_system_artifact_id(state: &ShellState) -> u64 {

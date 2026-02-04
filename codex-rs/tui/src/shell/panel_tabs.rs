@@ -8,20 +8,10 @@ use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
 
 use super::shell_state::ShellState;
-use super::shell_state::ShellTab;
-
-const TABS: [ShellTab; 6] = [
-    ShellTab::Overview,
-    ShellTab::System,
-    ShellTab::Plan,
-    ShellTab::Diff,
-    ShellTab::Explain,
-    ShellTab::Logs,
-];
 
 pub(crate) fn render(area: Rect, buffer: &mut Buffer, state: &ShellState) {
     let mut spans = Vec::new();
-    for (idx, tab) in TABS.iter().enumerate() {
+    for (idx, tab) in state.ordered_tabs().iter().enumerate() {
         if idx > 0 {
             spans.push(" | ".dim());
         }
