@@ -95,6 +95,7 @@ pub(crate) struct PersistedShellEventRecord {
 #[derive(Debug)]
 pub(crate) struct ShellEventStore {
     path: PathBuf,
+    snapshot_path: PathBuf,
     next_seq: u64,
 }
 
@@ -109,7 +110,15 @@ impl ShellEventStore {
             .map(|record| record.seq)
             .max()
             .map_or(1, |seq| seq.saturating_add(1));
-        Ok(Self { path, next_seq })
+        let snapshot_path = path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("workflow-snapshot.json");
+        Ok(Self {
+            path,
+            snapshot_path,
+            next_seq,
+        })
     }
 
     pub(crate) fn append(&mut self, event: PersistedShellEvent) -> std::io::Result<u64> {
@@ -129,9 +138,36 @@ impl ShellEventStore {
     pub(crate) fn load(&self) -> std::io::Result<Vec<PersistedShellEventRecord>> {
         load_records(self.path.as_path())
     }
+
+    pub(crate) fn load_since(
+        &self,
+        seq_exclusive: u64,
+    ) -> std::io::Result<Vec<PersistedShellEventRecord>> {
+        let records = self.load()?;
+        Ok(records
+            .into_iter()
+            .filter(|record| record.seq > seq_exclusive)
+            .collect())
+    }
+
+    pub(crate) fn save_snapshot(&self, snapshot: &PersistedShellSnapshot) -> std::io::Result<()> {
+        let encoded = serde_json::to_vec(snapshot)
+            .map_err(|err| std::io::Error::other(format!("serialize snapshot: {err}")))?;
+        std::fs::write(&self.snapshot_path, encoded)
+    }
+
+    pub(crate) fn load_snapshot(&self) -> std::io::Result<Option<PersistedShellSnapshot>> {
+        if !self.snapshot_path.exists() {
+            return Ok(None);
+        }
+        let bytes = std::fs::read(&self.snapshot_path)?;
+        let snapshot = serde_json::from_slice::<PersistedShellSnapshot>(&bytes)
+            .map_err(|err| std::io::Error::other(format!("parse snapshot: {err}")))?;
+        Ok(Some(snapshot))
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ReplayedWorkflowRun {
     pub(crate) run_id: u64,
     pub(crate) template_id: String,
@@ -141,15 +177,30 @@ pub(crate) struct ReplayedWorkflowRun {
     pub(crate) pending_request_id: Option<String>,
     pub(crate) pending_tool_id: Option<String>,
     pub(crate) pending_invocation_id: Option<u64>,
+    pub(crate) next_invocation_id: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct PersistedShellSnapshot {
+    pub(crate) version: u8,
+    pub(crate) seq: u64,
+    pub(crate) workflow: Option<ReplayedWorkflowRun>,
 }
 
 pub(crate) fn replay_latest_workflow(
     records: &[PersistedShellEventRecord],
 ) -> Option<ReplayedWorkflowRun> {
+    replay_workflow_from(None, records)
+}
+
+pub(crate) fn replay_workflow_from(
+    initial: Option<ReplayedWorkflowRun>,
+    records: &[PersistedShellEventRecord],
+) -> Option<ReplayedWorkflowRun> {
     let mut sorted = records.to_vec();
     sorted.sort_by_key(|record| record.seq);
 
-    let mut latest: Option<ReplayedWorkflowRun> = None;
+    let mut latest = initial;
     for record in sorted {
         match record.event {
             PersistedShellEvent::WorkflowRunStarted {
@@ -167,6 +218,7 @@ pub(crate) fn replay_latest_workflow(
                     pending_request_id: None,
                     pending_tool_id: None,
                     pending_invocation_id: None,
+                    next_invocation_id: 1,
                 });
             }
             PersistedShellEvent::WorkflowStatusChanged {
@@ -193,6 +245,7 @@ pub(crate) fn replay_latest_workflow(
                     && status == "succeeded"
                 {
                     run.step_index = run.step_index.saturating_add(1);
+                    run.next_invocation_id = run.next_invocation_id.saturating_add(1);
                 }
             }
             PersistedShellEvent::ApprovalRequested {
@@ -209,6 +262,7 @@ pub(crate) fn replay_latest_workflow(
                     run.pending_request_id = Some(request_id);
                     run.pending_tool_id = Some(tool_id);
                     run.pending_invocation_id = Some(invocation_id);
+                    run.next_invocation_id = invocation_id.saturating_add(1);
                 }
             }
             PersistedShellEvent::ApprovalResolved {
@@ -280,9 +334,11 @@ mod tests {
     use super::PersistedExecutionMode;
     use super::PersistedPersonaPolicy;
     use super::PersistedShellEvent;
+    use super::PersistedShellSnapshot;
     use super::PersistedWorkflowStatus;
     use super::ShellEventStore;
     use super::replay_latest_workflow;
+    use super::replay_workflow_from;
     use pretty_assertions::assert_eq;
 
     fn policy() -> PersistedPersonaPolicy {
@@ -405,5 +461,55 @@ mod tests {
 
         let run = replay_latest_workflow(&records).expect("replay");
         assert_eq!(run.step_index, 2);
+    }
+
+    #[test]
+    fn snapshot_round_trip_and_bounded_replay() {
+        let dir = tempdir().expect("tmpdir");
+        let path = dir.path().join("events.jsonl");
+        let mut store = ShellEventStore::open(path).expect("open");
+
+        let seq1 = store
+            .append(PersistedShellEvent::WorkflowRunStarted {
+                run_id: 10,
+                template_id: "scan_plan_diff_verify".to_string(),
+                execution_mode: PersistedExecutionMode::Simulated,
+                policy_tier: "balanced".to_string(),
+                persona_policy: policy(),
+            })
+            .expect("append");
+        let seq2 = store
+            .append(PersistedShellEvent::ToolResultRecorded {
+                run_id: 10,
+                invocation_id: 1,
+                tool_id: "scan_repo".to_string(),
+                status: "succeeded".to_string(),
+            })
+            .expect("append");
+        let before_snapshot = replay_latest_workflow(&store.load().expect("load")).expect("run");
+        store
+            .save_snapshot(&PersistedShellSnapshot {
+                version: 1,
+                seq: seq2,
+                workflow: Some(before_snapshot),
+            })
+            .expect("save snapshot");
+        let _seq3 = store
+            .append(PersistedShellEvent::ToolResultRecorded {
+                run_id: 10,
+                invocation_id: 2,
+                tool_id: "generate_plan".to_string(),
+                status: "succeeded".to_string(),
+            })
+            .expect("append");
+        assert_eq!(seq1, 1);
+
+        let snapshot = store
+            .load_snapshot()
+            .expect("load snapshot")
+            .expect("snapshot present");
+        let tail = store.load_since(snapshot.seq).expect("tail");
+        let replayed = replay_workflow_from(snapshot.workflow, &tail).expect("replayed");
+        assert_eq!(replayed.step_index, 2);
     }
 }

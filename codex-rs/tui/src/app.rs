@@ -42,8 +42,10 @@ use crate::shell::JourneyState as ShellJourneyState;
 use crate::shell::PersistedExecutionMode as ShellPersistedExecutionMode;
 use crate::shell::PersistedPersonaPolicy as ShellPersistedPersonaPolicy;
 use crate::shell::PersistedShellEvent as ShellPersistedShellEvent;
+use crate::shell::PersistedShellSnapshot as ShellPersistedShellSnapshot;
 use crate::shell::PersistedWorkflowStatus as ShellPersistedWorkflowStatus;
 use crate::shell::PolicyTier as ShellPolicyTier;
+use crate::shell::ReplayedWorkflowRun as ShellReplayedWorkflowRun;
 use crate::shell::RiskLevel as ShellRiskLevel;
 use crate::shell::RuntimeAction as ShellRuntimeAction;
 use crate::shell::RuntimeToolExecutor;
@@ -71,6 +73,8 @@ use crate::shell::VerifyOverall as ShellVerifyOverall;
 use crate::shell::VerifyStatus as ShellVerifyStatus;
 use crate::shell::WorkflowTemplateId as ShellWorkflowTemplateId;
 use crate::shell::apply_effects as apply_shell_effects;
+use crate::shell::replay_latest_workflow as replay_shell_latest_workflow;
+use crate::shell::replay_workflow_from as replay_shell_workflow_from;
 use crate::shell::simulate_tool as simulate_shell_tool;
 use crate::shell::workflow_template as shell_workflow_template;
 use crate::tui;
@@ -1263,6 +1267,7 @@ impl App {
                 ToolExecutionMode::Simulated
             },
         };
+        app.restore_shell_workflow_state();
 
         // On startup, if Agent mode (workspace-write) or ReadOnly is active, warn about world-writable dirs on Windows.
         #[cfg(target_os = "windows")]
@@ -2771,10 +2776,18 @@ impl App {
     }
 
     fn append_shell_persisted_event(&mut self, event: ShellPersistedShellEvent) {
-        if let Some(store) = self.shell_event_store.as_mut()
-            && let Err(err) = store.append(event)
-        {
-            tracing::warn!(error = %err, "failed to append shell persisted event");
+        let seq = match self.shell_event_store.as_mut() {
+            Some(store) => match store.append(event.clone()) {
+                Ok(seq) => Some(seq),
+                Err(err) => {
+                    tracing::warn!(error = %err, "failed to append shell persisted event");
+                    None
+                }
+            },
+            None => None,
+        };
+        if let Some(seq_value) = seq {
+            self.maybe_snapshot_shell_workflow(seq_value, event);
         }
     }
 
@@ -2811,6 +2824,151 @@ impl App {
             },
             Shell::persona_policy_snapshot,
         )
+    }
+
+    fn maybe_snapshot_shell_workflow(&mut self, seq: u64, event: ShellPersistedShellEvent) {
+        let should_snapshot = match event {
+            ShellPersistedShellEvent::ToolResultRecorded { .. }
+            | ShellPersistedShellEvent::ApprovalResolved { .. } => true,
+            ShellPersistedShellEvent::WorkflowStatusChanged { status, .. } => matches!(
+                status,
+                ShellPersistedWorkflowStatus::Blocked
+                    | ShellPersistedWorkflowStatus::Completed
+                    | ShellPersistedWorkflowStatus::Failed
+            ),
+            ShellPersistedShellEvent::WorkflowRunStarted { .. }
+            | ShellPersistedShellEvent::ToolInvocationIssued { .. }
+            | ShellPersistedShellEvent::ApprovalRequested { .. }
+            | ShellPersistedShellEvent::PolicyChanged { .. }
+            | ShellPersistedShellEvent::PersonaPolicyChanged { .. } => false,
+        };
+        if !should_snapshot {
+            return;
+        }
+        let snapshot = ShellPersistedShellSnapshot {
+            version: 1,
+            seq,
+            workflow: self
+                .workflow_run
+                .as_ref()
+                .map(Self::persisted_workflow_run_snapshot),
+        };
+        if let Some(store) = self.shell_event_store.as_ref()
+            && let Err(err) = store.save_snapshot(&snapshot)
+        {
+            tracing::warn!(error = %err, "failed to save shell workflow snapshot");
+        }
+    }
+
+    fn persisted_workflow_run_snapshot(run: &WorkflowRun) -> ShellReplayedWorkflowRun {
+        ShellReplayedWorkflowRun {
+            run_id: run.run_id,
+            template_id: "scan_plan_diff_verify".to_string(),
+            execution_mode: Self::persisted_execution_mode(run.execution_mode),
+            step_index: run.step_index,
+            status: Self::persisted_workflow_status(run.status),
+            pending_request_id: run.pending_request_id.clone(),
+            pending_tool_id: run.pending_tool_id.map(|tool| tool.as_str().to_string()),
+            pending_invocation_id: run.pending_invocation_id,
+            next_invocation_id: run.next_invocation_id,
+        }
+    }
+
+    fn workflow_template_id_from_persisted(template_id: &str) -> Option<ShellWorkflowTemplateId> {
+        match template_id {
+            "scan_plan_diff_verify" => Some(ShellWorkflowTemplateId::ScanPlanDiffVerify),
+            _ => None,
+        }
+    }
+
+    fn tool_id_from_persisted(tool_id: &str) -> Option<ShellToolId> {
+        match tool_id {
+            "scan_repo" => Some(ShellToolId::ScanRepo),
+            "generate_plan" => Some(ShellToolId::GeneratePlan),
+            "compute_diff" => Some(ShellToolId::ComputeDiff),
+            "verify" => Some(ShellToolId::Verify),
+            _ => None,
+        }
+    }
+
+    fn execution_mode_from_persisted(mode: ShellPersistedExecutionMode) -> ToolExecutionMode {
+        match mode {
+            ShellPersistedExecutionMode::Simulated => ToolExecutionMode::Simulated,
+            ShellPersistedExecutionMode::Runtime => ToolExecutionMode::Runtime,
+        }
+    }
+
+    fn workflow_status_from_persisted(status: ShellPersistedWorkflowStatus) -> WorkflowRunStatus {
+        match status {
+            ShellPersistedWorkflowStatus::Running => WorkflowRunStatus::Running,
+            ShellPersistedWorkflowStatus::AwaitingApproval => WorkflowRunStatus::AwaitingApproval,
+            ShellPersistedWorkflowStatus::Blocked => WorkflowRunStatus::Blocked,
+            ShellPersistedWorkflowStatus::Completed => WorkflowRunStatus::Completed,
+            ShellPersistedWorkflowStatus::Failed => WorkflowRunStatus::Failed,
+        }
+    }
+
+    fn restore_shell_workflow_state(&mut self) {
+        let Some(store) = self.shell_event_store.as_ref() else {
+            return;
+        };
+        let restored = match store.load_snapshot() {
+            Ok(Some(snapshot)) => {
+                let tail = match store.load_since(snapshot.seq) {
+                    Ok(events) => events,
+                    Err(err) => {
+                        tracing::warn!(error = %err, "failed to load persisted workflow tail");
+                        Vec::new()
+                    }
+                };
+                replay_shell_workflow_from(snapshot.workflow, &tail)
+            }
+            Ok(None) => match store.load() {
+                Ok(events) => replay_shell_latest_workflow(&events),
+                Err(err) => {
+                    tracing::warn!(error = %err, "failed to load persisted workflow events");
+                    None
+                }
+            },
+            Err(err) => {
+                tracing::warn!(error = %err, "failed to load persisted workflow snapshot");
+                None
+            }
+        };
+
+        let Some(run) = restored else {
+            return;
+        };
+        let Some(template_id) = Self::workflow_template_id_from_persisted(run.template_id.as_str())
+        else {
+            tracing::warn!(
+                template_id = run.template_id,
+                "ignoring persisted workflow with unknown template id"
+            );
+            return;
+        };
+        let pending_tool_id = run
+            .pending_tool_id
+            .as_deref()
+            .and_then(Self::tool_id_from_persisted);
+
+        self.workflow_run = Some(WorkflowRun {
+            run_id: run.run_id,
+            template_id,
+            execution_mode: Self::execution_mode_from_persisted(run.execution_mode),
+            step_index: run.step_index,
+            next_invocation_id: run.next_invocation_id.max(1),
+            status: Self::workflow_status_from_persisted(run.status),
+            pending_request_id: run.pending_request_id,
+            pending_tool_id,
+            pending_invocation_id: run.pending_invocation_id,
+        });
+        if let Some(workflow_run) = self.workflow_run.as_ref() {
+            self.dispatch_shell_runtime_action(ShellRuntimeAction::AppendLog(format!(
+                "Replayed workflow run {} at step {} ({:?})",
+                workflow_run.run_id, workflow_run.step_index, workflow_run.status
+            )));
+        }
     }
 
     fn approval_request_id_for_elicitation(
