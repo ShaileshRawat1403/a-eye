@@ -147,7 +147,11 @@ where
     /// Creates a new [`Terminal`] with the given [`Backend`] and [`TerminalOptions`].
     pub fn with_options(mut backend: B) -> io::Result<Self> {
         let screen_size = backend.size()?;
-        let cursor_pos = backend.get_cursor_position()?;
+        // Some terminal hosts intermittently fail cursor position queries at startup.
+        // Fall back to the top-left so we can still boot and render.
+        let cursor_pos = backend
+            .get_cursor_position()
+            .unwrap_or(Position { x: 0, y: 0 });
         Ok(Self {
             backend,
             buffers: [Buffer::empty(Rect::ZERO), Buffer::empty(Rect::ZERO)],
