@@ -1,4 +1,5 @@
 use super::*;
+use codex_protocol::config_types::Personality;
 use pretty_assertions::assert_eq;
 
 fn approval_request(id: &str, run_id: u64, risk: ApprovalRiskClass) -> ApprovalRequestRecord {
@@ -215,4 +216,25 @@ fn approval_actions_keep_projection_in_sync() {
         RuntimeAction::ResolveApproval(approval_decision("req-1", 7, false)),
     );
     assert_projection_sync(&state);
+}
+
+#[test]
+fn persona_update_applies_persona_policy_defaults() {
+    let mut state = state();
+    run_runtime(
+        &mut state,
+        RuntimeAction::SetPersonality(Personality::Pragmatic),
+    );
+
+    assert_eq!(state.sm.personality, Personality::Pragmatic);
+    assert_eq!(state.sm.persona_policy.tier_ceiling, PolicyTier::Permissive);
+    assert_eq!(state.sm.persona_policy.explanation_depth.label(), "brief");
+    assert_eq!(
+        state.sm.persona_policy.output_format.label(),
+        "technical-first"
+    );
+    assert_eq!(
+        state.sm.persona_policy.visible_tools,
+        &["scan_repo", "generate_plan", "compute_diff", "verify"]
+    );
 }

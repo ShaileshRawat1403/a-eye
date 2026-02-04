@@ -426,10 +426,51 @@ pub(crate) struct ShellInteraction {
 #[derive(Debug, Clone)]
 pub(crate) struct SubjectMatterState {
     pub(crate) personality: Personality,
+    pub(crate) persona_policy: PersonaPolicy,
     pub(crate) skills_enabled_count: usize,
     pub(crate) collaboration_mode_label: Arc<str>,
     pub(crate) model_slug: Option<Arc<str>>,
     pub(crate) reasoning_effort: Option<ReasoningEffort>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExplanationDepth {
+    Brief,
+    Standard,
+    Detailed,
+}
+
+impl ExplanationDepth {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Brief => "brief",
+            Self::Standard => "standard",
+            Self::Detailed => "detailed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PersonaOutputFormat {
+    ImpactFirst,
+    TechnicalFirst,
+}
+
+impl PersonaOutputFormat {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::ImpactFirst => "impact-first",
+            Self::TechnicalFirst => "technical-first",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PersonaPolicy {
+    pub(crate) tier_ceiling: PolicyTier,
+    pub(crate) explanation_depth: ExplanationDepth,
+    pub(crate) output_format: PersonaOutputFormat,
+    pub(crate) visible_tools: &'static [&'static str],
 }
 
 #[derive(Debug, Clone)]
@@ -721,6 +762,26 @@ pub(crate) struct ShellState {
     pub(crate) cwd: Option<PathBuf>,
 }
 
+const FRIENDLY_VISIBLE_TOOLS: &[&str] = &["scan_repo", "generate_plan", "verify"];
+const PRAGMATIC_VISIBLE_TOOLS: &[&str] = &["scan_repo", "generate_plan", "compute_diff", "verify"];
+
+pub(crate) fn persona_policy_for(personality: Personality) -> PersonaPolicy {
+    match personality {
+        Personality::Friendly => PersonaPolicy {
+            tier_ceiling: PolicyTier::Balanced,
+            explanation_depth: ExplanationDepth::Detailed,
+            output_format: PersonaOutputFormat::ImpactFirst,
+            visible_tools: FRIENDLY_VISIBLE_TOOLS,
+        },
+        Personality::Pragmatic => PersonaPolicy {
+            tier_ceiling: PolicyTier::Permissive,
+            explanation_depth: ExplanationDepth::Brief,
+            output_format: PersonaOutputFormat::TechnicalFirst,
+            visible_tools: PRAGMATIC_VISIBLE_TOOLS,
+        },
+    }
+}
+
 impl ShellState {
     pub(crate) fn new(project_name: String, personality: Personality) -> Self {
         Self {
@@ -748,6 +809,7 @@ impl ShellState {
             },
             sm: SubjectMatterState {
                 personality,
+                persona_policy: persona_policy_for(personality),
                 skills_enabled_count: 0,
                 collaboration_mode_label: "code".into(),
                 model_slug: None,

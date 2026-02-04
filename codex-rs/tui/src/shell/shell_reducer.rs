@@ -28,6 +28,7 @@ use super::shell_state::StepStatus;
 use super::shell_state::SystemArtifact;
 use super::shell_state::artifact_is_newer;
 use super::shell_state::derive_journey;
+use super::shell_state::persona_policy_for;
 use super::shell_state::policy_requirement_for_risk;
 use super::ui_action::ClearWhich;
 use super::ui_action::PALETTE_ITEMS;
@@ -239,6 +240,7 @@ fn reduce_runtime(state: &mut ShellState, action: RuntimeAction) {
         }
         RuntimeAction::SetPersonality(personality) => {
             state.sm.personality = personality;
+            state.sm.persona_policy = persona_policy_for(personality);
         }
         RuntimeAction::SetSkillsEnabledCount(count) => {
             state.sm.skills_enabled_count = count;

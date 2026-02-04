@@ -63,6 +63,16 @@ pub(crate) fn render(area: Rect, buffer: &mut Buffer, state: &ShellState) {
                     " • Approval: ".dim(),
                     approval.into(),
                 ]),
+                Line::from(vec![
+                    "Persona: ".dim(),
+                    state.sm.personality.to_string().into(),
+                    " • Tier ceiling: ".dim(),
+                    state.sm.persona_policy.tier_ceiling.label().into(),
+                    " • Explain: ".dim(),
+                    state.sm.persona_policy.explanation_depth.label().into(),
+                    " • Format: ".dim(),
+                    state.sm.persona_policy.output_format.label().into(),
+                ]),
             ]
         }
         ShellTab::System => render_system(state),
