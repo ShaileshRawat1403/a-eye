@@ -663,6 +663,7 @@ enum WorkflowRunStatus {
 struct WorkflowRun {
     run_id: u64,
     template_id: ShellWorkflowTemplateId,
+    execution_mode: ToolExecutionMode,
     step_index: usize,
     next_invocation_id: u64,
     status: WorkflowRunStatus,
@@ -2896,6 +2897,7 @@ impl App {
         self.workflow_run = Some(WorkflowRun {
             run_id,
             template_id: ShellWorkflowTemplateId::ScanPlanDiffVerify,
+            execution_mode: self.tool_execution_mode,
             step_index: 0,
             next_invocation_id: 1,
             status: WorkflowRunStatus::Running,
@@ -2909,11 +2911,15 @@ impl App {
         self.run_workflow_next_step();
     }
 
-    fn execute_workflow_tool(&mut self, invocation: ShellToolInvocation) -> ShellToolResult {
+    fn execute_workflow_tool(
+        &mut self,
+        invocation: ShellToolInvocation,
+        execution_mode: ToolExecutionMode,
+    ) -> ShellToolResult {
         let context = ShellToolExecutionContext {
             cwd: self.config.cwd.as_path(),
         };
-        let outcome = match self.tool_execution_mode {
+        let outcome = match execution_mode {
             ToolExecutionMode::Simulated => {
                 let executor = SimulatedToolExecutor;
                 executor.execute(invocation, &context)
@@ -3107,7 +3113,7 @@ impl App {
                 invocation.invocation_id,
                 invocation.tool_id.as_str()
             )));
-            let result = self.execute_workflow_tool(invocation);
+            let result = self.execute_workflow_tool(invocation, run.execution_mode);
             for log in &result.logs {
                 self.dispatch_shell_runtime_action(ShellRuntimeAction::AppendLog(log.clone()));
             }
@@ -3141,6 +3147,7 @@ impl App {
         };
         if !matches!(run.status, WorkflowRunStatus::AwaitingApproval)
             || run.pending_request_id.as_deref() != Some(decision.request_id.as_str())
+            || run.run_id != decision.run_id
         {
             self.workflow_run = Some(run);
             return false;
@@ -3156,7 +3163,7 @@ impl App {
                     tool_id,
                     requested_tier: self.current_policy_tier(),
                 };
-                let result = self.execute_workflow_tool(invocation);
+                let result = self.execute_workflow_tool(invocation, run.execution_mode);
                 for log in &result.logs {
                     self.dispatch_shell_runtime_action(ShellRuntimeAction::AppendLog(log.clone()));
                 }
@@ -4078,5 +4085,121 @@ mod tests {
             summary.resume_command,
             Some("codex resume my-session".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn workflow_requires_approval_before_compute_diff_in_both_modes() {
+        for mode in [ToolExecutionMode::Simulated, ToolExecutionMode::Runtime] {
+            let mut app = make_test_app().await;
+            app.tool_execution_mode = mode;
+            app.chat_widget
+                .set_approval_policy(AskForApproval::OnRequest);
+
+            app.start_default_workflow_run();
+
+            let run = app.workflow_run.as_ref().expect("workflow run created");
+            assert_eq!(run.status, WorkflowRunStatus::AwaitingApproval);
+            assert_eq!(run.step_index, 3);
+            assert_eq!(run.pending_tool_id, Some(ShellToolId::Verify));
+            assert_eq!(run.execution_mode, mode);
+        }
+    }
+
+    #[tokio::test]
+    async fn workflow_execution_mode_is_frozen_per_run() {
+        let mut app = make_test_app().await;
+        app.tool_execution_mode = ToolExecutionMode::Simulated;
+        app.chat_widget
+            .set_approval_policy(AskForApproval::OnRequest);
+        app.start_default_workflow_run();
+
+        let run = app.workflow_run.as_ref().expect("workflow run created");
+        let request_id = run
+            .pending_request_id
+            .clone()
+            .expect("pending approval request");
+        let run_id = run.run_id;
+        assert_eq!(run.execution_mode, ToolExecutionMode::Simulated);
+
+        // Changing app-level mode should not affect the in-flight workflow run.
+        app.tool_execution_mode = ToolExecutionMode::Runtime;
+
+        let approved = app.handle_workflow_approval_decision(&ShellApprovalDecisionRecord {
+            request_id,
+            run_id,
+            action: ShellApprovalAction::Execute,
+            decision: ShellApprovalDecisionKind::Approved,
+            timestamp_ms: 0,
+        });
+        assert!(approved);
+
+        let run = app
+            .workflow_run
+            .as_ref()
+            .expect("workflow run still present");
+        assert_eq!(run.execution_mode, ToolExecutionMode::Simulated);
+        assert_eq!(run.status, WorkflowRunStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn workflow_approval_rejects_mismatched_request_or_run_id() {
+        let mut app = make_test_app().await;
+        app.chat_widget
+            .set_approval_policy(AskForApproval::OnRequest);
+        app.start_default_workflow_run();
+
+        let run = app.workflow_run.as_ref().expect("workflow run created");
+        let request_id = run
+            .pending_request_id
+            .clone()
+            .expect("pending approval request");
+        let run_id = run.run_id;
+
+        let wrong_request = app.handle_workflow_approval_decision(&ShellApprovalDecisionRecord {
+            request_id: format!("{request_id}-wrong"),
+            run_id,
+            action: ShellApprovalAction::Execute,
+            decision: ShellApprovalDecisionKind::Approved,
+            timestamp_ms: 0,
+        });
+        assert!(!wrong_request);
+
+        let wrong_run = app.handle_workflow_approval_decision(&ShellApprovalDecisionRecord {
+            request_id,
+            run_id: run_id.saturating_add(1),
+            action: ShellApprovalAction::Execute,
+            decision: ShellApprovalDecisionKind::Approved,
+            timestamp_ms: 0,
+        });
+        assert!(!wrong_run);
+
+        let run = app
+            .workflow_run
+            .as_ref()
+            .expect("workflow run still present");
+        assert_eq!(run.status, WorkflowRunStatus::AwaitingApproval);
+    }
+
+    #[tokio::test]
+    async fn duplicate_workflow_approval_decision_is_ignored() {
+        let mut app = make_test_app().await;
+        app.chat_widget
+            .set_approval_policy(AskForApproval::OnRequest);
+        app.start_default_workflow_run();
+
+        let run = app.workflow_run.as_ref().expect("workflow run created");
+        let decision = ShellApprovalDecisionRecord {
+            request_id: run
+                .pending_request_id
+                .clone()
+                .expect("pending approval request"),
+            run_id: run.run_id,
+            action: ShellApprovalAction::Execute,
+            decision: ShellApprovalDecisionKind::Approved,
+            timestamp_ms: 0,
+        };
+
+        assert!(app.handle_workflow_approval_decision(&decision));
+        assert!(!app.handle_workflow_approval_decision(&decision));
     }
 }

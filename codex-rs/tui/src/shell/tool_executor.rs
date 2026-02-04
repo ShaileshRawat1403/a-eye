@@ -320,19 +320,70 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::process::Stdio;
+
     use pretty_assertions::assert_eq;
+    use tempfile::TempDir;
 
     use super::*;
     use crate::shell::PolicyTier;
+    use crate::shell::tool_registry::ArtifactKind;
 
-    #[test]
-    fn simulated_executor_is_deterministic() {
-        let invocation = ToolInvocation {
+    fn invocation(tool_id: ToolId) -> ToolInvocation {
+        ToolInvocation {
             run_id: 7,
             invocation_id: 3,
-            tool_id: ToolId::ComputeDiff,
+            tool_id,
             requested_tier: PolicyTier::Balanced,
-        };
+        }
+    }
+
+    fn run_git_ok(cwd: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .current_dir(cwd)
+            .args(args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("git command should execute");
+        assert!(status.success(), "git {args:?} failed with {status}");
+    }
+
+    fn make_repo_fixture() -> TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        run_git_ok(dir.path(), &["init"]);
+        run_git_ok(dir.path(), &["config", "user.name", "Test User"]);
+        run_git_ok(dir.path(), &["config", "user.email", "test@example.com"]);
+
+        fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n",
+        )
+        .expect("write Cargo.toml");
+        fs::write(dir.path().join("README.md"), "fixture\n").expect("write README");
+        run_git_ok(dir.path(), &["add", "."]);
+        run_git_ok(dir.path(), &["commit", "-m", "init"]);
+
+        fs::write(dir.path().join("README.md"), "fixture\nchanged\n").expect("modify README");
+        fs::write(dir.path().join("untracked.txt"), "hello\n").expect("write untracked");
+        dir
+    }
+
+    fn assert_execution_contract(outcome: &ToolExecutionOutcome, invocation: ToolInvocation) {
+        assert_eq!(outcome.result.run_id, invocation.run_id);
+        assert_eq!(outcome.result.invocation_id, invocation.invocation_id);
+        assert_eq!(outcome.result.tool_id, invocation.tool_id);
+        assert_eq!(
+            outcome.result.artifacts_emitted,
+            ToolRegistry::get(invocation.tool_id).outputs.emits.to_vec()
+        );
+        assert!(!outcome.result.logs.is_empty());
+    }
+
+    #[test]
+    fn simulated_executor_is_deterministic_for_diff() {
+        let invocation = invocation(ToolId::ComputeDiff);
         let context = ToolExecutionContext {
             cwd: Path::new("."),
         };
@@ -347,6 +398,83 @@ mod tests {
                     unified_diff: right,
                 },
             ) => assert_eq!(left, right),
+            _ => panic!("expected diff payload"),
+        }
+    }
+
+    #[test]
+    fn executors_preserve_contract_shape_for_all_workflow_tools() {
+        let fixture = make_repo_fixture();
+        let context = ToolExecutionContext {
+            cwd: fixture.path(),
+        };
+        let simulated = SimulatedToolExecutor;
+        let runtime = RuntimeToolExecutor;
+
+        for tool_id in [
+            ToolId::ScanRepo,
+            ToolId::GeneratePlan,
+            ToolId::ComputeDiff,
+            ToolId::Verify,
+        ] {
+            let invocation = invocation(tool_id);
+            let sim_outcome = simulated.execute(invocation, &context);
+            let runtime_outcome = runtime.execute(invocation, &context);
+
+            assert_execution_contract(&sim_outcome, invocation);
+            assert_execution_contract(&runtime_outcome, invocation);
+            assert_eq!(sim_outcome.result.status, runtime_outcome.result.status);
+
+            match (&sim_outcome.payload, &runtime_outcome.payload) {
+                (
+                    ToolExecutionPayload::System { .. },
+                    ToolExecutionPayload::System {
+                        summary,
+                        detected_stack,
+                        ..
+                    },
+                ) => {
+                    assert!(!summary.is_empty());
+                    assert!(detected_stack.iter().any(|stack| stack == "rust"));
+                }
+                (ToolExecutionPayload::Plan { .. }, ToolExecutionPayload::Plan { steps }) => {
+                    assert!(!steps.is_empty())
+                }
+                (
+                    ToolExecutionPayload::Diff { .. },
+                    ToolExecutionPayload::Diff { unified_diff },
+                ) => {
+                    assert!(unified_diff.contains("+++ b/"));
+                }
+                (
+                    ToolExecutionPayload::Verify { .. },
+                    ToolExecutionPayload::Verify { checks, .. },
+                ) => assert!(!checks.is_empty()),
+                _ => panic!("payload variant mismatch for {}", tool_id.as_str()),
+            }
+        }
+    }
+
+    #[test]
+    fn runtime_diff_fails_outside_git_repo() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let context = ToolExecutionContext { cwd: temp.path() };
+        let executor = RuntimeToolExecutor;
+        let invocation = ToolInvocation {
+            run_id: 7,
+            invocation_id: 3,
+            tool_id: ToolId::ComputeDiff,
+            requested_tier: PolicyTier::Balanced,
+        };
+
+        let outcome = executor.execute(invocation, &context);
+        assert_eq!(outcome.result.status, ToolInvocationStatus::Failed);
+        assert_eq!(
+            outcome.result.artifacts_emitted,
+            vec![ArtifactKind::Diff, ArtifactKind::Logs]
+        );
+        match outcome.payload {
+            ToolExecutionPayload::Diff { unified_diff } => assert!(unified_diff.is_empty()),
             _ => panic!("expected diff payload"),
         }
     }
