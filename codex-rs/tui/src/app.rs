@@ -39,6 +39,10 @@ use crate::shell::ApprovalRequestRecord as ShellApprovalRequestRecord;
 use crate::shell::ApprovalRiskClass as ShellApprovalRiskClass;
 use crate::shell::ErrorKind as ShellErrorKind;
 use crate::shell::JourneyState as ShellJourneyState;
+use crate::shell::PersistedExecutionMode as ShellPersistedExecutionMode;
+use crate::shell::PersistedPersonaPolicy as ShellPersistedPersonaPolicy;
+use crate::shell::PersistedShellEvent as ShellPersistedShellEvent;
+use crate::shell::PersistedWorkflowStatus as ShellPersistedWorkflowStatus;
 use crate::shell::PolicyTier as ShellPolicyTier;
 use crate::shell::RiskLevel as ShellRiskLevel;
 use crate::shell::RuntimeAction as ShellRuntimeAction;
@@ -47,6 +51,7 @@ use crate::shell::SafetyMode as ShellSafetyMode;
 use crate::shell::ScanStatus as ShellScanStatus;
 use crate::shell::Shell;
 use crate::shell::ShellAction;
+use crate::shell::ShellEventStore;
 use crate::shell::ShellState;
 use crate::shell::ShellTab;
 use crate::shell::SimulatedToolExecutor;
@@ -168,6 +173,12 @@ fn aeye_runtime_tool_exec_enabled() -> bool {
     std::env::var("A_EYE_TOOL_EXEC_RUNTIME")
         .ok()
         .is_some_and(|v| parse_env_bool(&v))
+}
+
+fn aeye_shell_persistence_enabled() -> bool {
+    std::env::var("A_EYE_SHELL_PERSIST")
+        .ok()
+        .is_none_or(|v| parse_env_bool(&v))
 }
 
 fn project_name_for_shell(cwd: &Path) -> String {
@@ -639,6 +650,7 @@ pub(crate) struct App {
     primary_session_configured: Option<SessionConfiguredEvent>,
     pending_primary_events: VecDeque<Event>,
     shell: Option<Shell>,
+    shell_event_store: Option<ShellEventStore>,
     workflow_run: Option<WorkflowRun>,
     tool_execution_mode: ToolExecutionMode,
 }
@@ -1186,6 +1198,25 @@ impl App {
         } else {
             None
         };
+        let shell_event_store = if shell.is_some() && aeye_shell_persistence_enabled() {
+            let path = config
+                .codex_home
+                .join("shell")
+                .join("workflow-events.jsonl");
+            match ShellEventStore::open(path.clone()) {
+                Ok(store) => Some(store),
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        path = %path.display(),
+                        "failed to initialize shell event persistence"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         let file_search = FileSearchManager::new(config.cwd.clone(), app_event_tx.clone());
         #[cfg(not(debug_assertions))]
@@ -1224,6 +1255,7 @@ impl App {
             primary_session_configured: None,
             pending_primary_events: VecDeque::new(),
             shell,
+            shell_event_store,
             workflow_run: None,
             tool_execution_mode: if aeye_runtime_tool_exec_enabled() {
                 ToolExecutionMode::Runtime
@@ -1817,6 +1849,11 @@ impl App {
             }
             AppEvent::UpdatePersonality(personality) => {
                 self.on_update_personality(personality);
+                self.append_shell_persisted_event(ShellPersistedShellEvent::PersonaPolicyChanged {
+                    persona: Self::personality_label(personality).to_string(),
+                    policy: self.current_persona_policy_for_persistence(),
+                    source: "runtime_update".to_string(),
+                });
             }
             AppEvent::OpenReasoningPopup { model } => {
                 self.chat_widget.open_reasoning_popup(model);
@@ -2154,6 +2191,10 @@ impl App {
                     return Ok(AppRunControl::Continue);
                 }
                 self.chat_widget.set_approval_policy(policy);
+                self.append_shell_persisted_event(ShellPersistedShellEvent::PolicyChanged {
+                    tier: self.current_policy_tier().label().to_string(),
+                    source: "approval_policy_update".to_string(),
+                });
             }
             AppEvent::UpdateSandboxPolicy(policy) => {
                 #[cfg(target_os = "windows")]
@@ -2184,6 +2225,10 @@ impl App {
                 }
                 self.runtime_sandbox_policy_override =
                     Some(self.config.sandbox_policy.get().clone());
+                self.append_shell_persisted_event(ShellPersistedShellEvent::PolicyChanged {
+                    tier: self.current_policy_tier().label().to_string(),
+                    source: "sandbox_policy_update".to_string(),
+                });
 
                 // If sandbox policy becomes workspace-write or read-only, run the Windows world-writable scan.
                 #[cfg(target_os = "windows")]
@@ -2725,6 +2770,49 @@ impl App {
             .map_or(1, |shell| shell.current_run_id().max(1))
     }
 
+    fn append_shell_persisted_event(&mut self, event: ShellPersistedShellEvent) {
+        if let Some(store) = self.shell_event_store.as_mut()
+            && let Err(err) = store.append(event)
+        {
+            tracing::warn!(error = %err, "failed to append shell persisted event");
+        }
+    }
+
+    fn persisted_execution_mode(mode: ToolExecutionMode) -> ShellPersistedExecutionMode {
+        match mode {
+            ToolExecutionMode::Simulated => ShellPersistedExecutionMode::Simulated,
+            ToolExecutionMode::Runtime => ShellPersistedExecutionMode::Runtime,
+        }
+    }
+
+    fn persisted_workflow_status(status: WorkflowRunStatus) -> ShellPersistedWorkflowStatus {
+        match status {
+            WorkflowRunStatus::Running => ShellPersistedWorkflowStatus::Running,
+            WorkflowRunStatus::AwaitingApproval => ShellPersistedWorkflowStatus::AwaitingApproval,
+            WorkflowRunStatus::Blocked => ShellPersistedWorkflowStatus::Blocked,
+            WorkflowRunStatus::Completed => ShellPersistedWorkflowStatus::Completed,
+            WorkflowRunStatus::Failed => ShellPersistedWorkflowStatus::Failed,
+        }
+    }
+
+    fn current_persona_policy_for_persistence(&self) -> ShellPersistedPersonaPolicy {
+        self.shell.as_ref().map_or_else(
+            || {
+                let personality = self
+                    .config
+                    .personality
+                    .unwrap_or(codex_protocol::config_types::Personality::Friendly);
+                let policy = crate::shell::persona_policy_for(personality);
+                ShellPersistedPersonaPolicy {
+                    tier_ceiling: policy.tier_ceiling.label().to_string(),
+                    explanation_depth: policy.explanation_depth.label().to_string(),
+                    output_format: policy.output_format.label().to_string(),
+                }
+            },
+            Shell::persona_policy_snapshot,
+        )
+    }
+
     fn approval_request_id_for_elicitation(
         server_name: &str,
         request_id: &mcp_types::RequestId,
@@ -2894,7 +2982,7 @@ impl App {
 
     fn start_default_workflow_run(&mut self) {
         let run_id = self.current_shell_run_id().saturating_add(1);
-        self.workflow_run = Some(WorkflowRun {
+        let workflow_run = WorkflowRun {
             run_id,
             template_id: ShellWorkflowTemplateId::ScanPlanDiffVerify,
             execution_mode: self.tool_execution_mode,
@@ -2904,7 +2992,15 @@ impl App {
             pending_request_id: None,
             pending_tool_id: None,
             pending_invocation_id: None,
+        };
+        self.append_shell_persisted_event(ShellPersistedShellEvent::WorkflowRunStarted {
+            run_id: workflow_run.run_id,
+            template_id: "scan_plan_diff_verify".to_string(),
+            execution_mode: Self::persisted_execution_mode(workflow_run.execution_mode),
+            policy_tier: self.current_policy_tier().label().to_string(),
+            persona_policy: self.current_persona_policy_for_persistence(),
         });
+        self.workflow_run = Some(workflow_run);
         self.dispatch_shell_runtime_action(ShellRuntimeAction::AppendLog(format!(
             "Workflow run {run_id} started"
         )));
@@ -3039,6 +3135,14 @@ impl App {
             let template = shell_workflow_template(run.template_id);
             if run.step_index >= template.steps.len() {
                 run.status = WorkflowRunStatus::Completed;
+                self.append_shell_persisted_event(
+                    ShellPersistedShellEvent::WorkflowStatusChanged {
+                        run_id: run.run_id,
+                        status: Self::persisted_workflow_status(run.status),
+                        step_index: run.step_index,
+                        reason: Some("workflow_complete".to_string()),
+                    },
+                );
                 self.dispatch_shell_runtime_action(ShellRuntimeAction::AppendLog(format!(
                     "Workflow run {} completed",
                     run.run_id
@@ -3054,6 +3158,14 @@ impl App {
             if outcome.blocked || matches!(outcome.requirement, ShellApprovalGateRequirement::Deny)
             {
                 run.status = WorkflowRunStatus::Blocked;
+                self.append_shell_persisted_event(
+                    ShellPersistedShellEvent::WorkflowStatusChanged {
+                        run_id: run.run_id,
+                        status: Self::persisted_workflow_status(run.status),
+                        step_index: run.step_index,
+                        reason: Some(outcome.reason.to_string()),
+                    },
+                );
                 self.dispatch_shell_runtime_action(ShellRuntimeAction::AppendLog(format!(
                     "Workflow run {} blocked at step {} ({})",
                     run.run_id, step.step_id, outcome.reason
@@ -3076,6 +3188,22 @@ impl App {
                 run.pending_request_id = Some(request_id.clone());
                 run.pending_tool_id = Some(step.tool_id);
                 run.pending_invocation_id = Some(invocation_id);
+                self.append_shell_persisted_event(ShellPersistedShellEvent::ApprovalRequested {
+                    request_id: request_id.clone(),
+                    run_id: run.run_id,
+                    invocation_id,
+                    tool_id: step.tool_id.as_str().to_string(),
+                    risk: ShellToolRegistry::risk(step.tool_id).label().to_string(),
+                    preview: format!("workflow-tool {}", step.tool_id.as_str()),
+                });
+                self.append_shell_persisted_event(
+                    ShellPersistedShellEvent::WorkflowStatusChanged {
+                        run_id: run.run_id,
+                        status: Self::persisted_workflow_status(run.status),
+                        step_index: run.step_index,
+                        reason: Some("approval_required".to_string()),
+                    },
+                );
                 self.dispatch_shell_runtime_action(ShellRuntimeAction::AppendLog(format!(
                     "Workflow step {} requires approval (request: {request_id})",
                     step.step_id
@@ -3107,6 +3235,11 @@ impl App {
                 requested_tier: policy_tier,
             };
             run.next_invocation_id = run.next_invocation_id.saturating_add(1);
+            self.append_shell_persisted_event(ShellPersistedShellEvent::ToolInvocationIssued {
+                run_id: invocation.run_id,
+                invocation_id: invocation.invocation_id,
+                tool_id: invocation.tool_id.as_str().to_string(),
+            });
             self.dispatch_shell_runtime_action(ShellRuntimeAction::AppendLog(format!(
                 "ToolInvocationStarted run={} invocation={} tool={}",
                 invocation.run_id,
@@ -3124,8 +3257,22 @@ impl App {
                 result.tool_id.as_str(),
                 result.status
             )));
+            self.append_shell_persisted_event(ShellPersistedShellEvent::ToolResultRecorded {
+                run_id: result.run_id,
+                invocation_id: result.invocation_id,
+                tool_id: result.tool_id.as_str().to_string(),
+                status: format!("{:?}", result.status).to_ascii_lowercase(),
+            });
             if !matches!(result.status, ShellToolInvocationStatus::Succeeded) {
                 run.status = WorkflowRunStatus::Failed;
+                self.append_shell_persisted_event(
+                    ShellPersistedShellEvent::WorkflowStatusChanged {
+                        run_id: run.run_id,
+                        status: Self::persisted_workflow_status(run.status),
+                        step_index: run.step_index,
+                        reason: Some("tool_failed".to_string()),
+                    },
+                );
                 break;
             }
             run.step_index = run.step_index.saturating_add(1);
@@ -3154,6 +3301,11 @@ impl App {
         }
 
         if matches!(decision.decision, ShellApprovalDecisionKind::Approved) {
+            self.append_shell_persisted_event(ShellPersistedShellEvent::ApprovalResolved {
+                request_id: decision.request_id.clone(),
+                run_id: decision.run_id,
+                decision: "approved".to_string(),
+            });
             if let (Some(tool_id), Some(invocation_id)) =
                 (run.pending_tool_id, run.pending_invocation_id)
             {
@@ -3163,13 +3315,32 @@ impl App {
                     tool_id,
                     requested_tier: self.current_policy_tier(),
                 };
+                self.append_shell_persisted_event(ShellPersistedShellEvent::ToolInvocationIssued {
+                    run_id: invocation.run_id,
+                    invocation_id: invocation.invocation_id,
+                    tool_id: invocation.tool_id.as_str().to_string(),
+                });
                 let result = self.execute_workflow_tool(invocation, run.execution_mode);
                 for log in &result.logs {
                     self.dispatch_shell_runtime_action(ShellRuntimeAction::AppendLog(log.clone()));
                 }
+                self.append_shell_persisted_event(ShellPersistedShellEvent::ToolResultRecorded {
+                    run_id: result.run_id,
+                    invocation_id: result.invocation_id,
+                    tool_id: result.tool_id.as_str().to_string(),
+                    status: format!("{:?}", result.status).to_ascii_lowercase(),
+                });
                 if matches!(result.status, ShellToolInvocationStatus::Succeeded) {
                     run.step_index = run.step_index.saturating_add(1);
                     run.status = WorkflowRunStatus::Running;
+                    self.append_shell_persisted_event(
+                        ShellPersistedShellEvent::WorkflowStatusChanged {
+                            run_id: run.run_id,
+                            status: Self::persisted_workflow_status(run.status),
+                            step_index: run.step_index,
+                            reason: Some("approval_granted".to_string()),
+                        },
+                    );
                     run.pending_request_id = None;
                     run.pending_tool_id = None;
                     run.pending_invocation_id = None;
@@ -3179,8 +3350,25 @@ impl App {
                 }
             }
             run.status = WorkflowRunStatus::Failed;
+            self.append_shell_persisted_event(ShellPersistedShellEvent::WorkflowStatusChanged {
+                run_id: run.run_id,
+                status: Self::persisted_workflow_status(run.status),
+                step_index: run.step_index,
+                reason: Some("approved_tool_failed".to_string()),
+            });
         } else {
             run.status = WorkflowRunStatus::Blocked;
+            self.append_shell_persisted_event(ShellPersistedShellEvent::ApprovalResolved {
+                request_id: decision.request_id.clone(),
+                run_id: decision.run_id,
+                decision: "denied".to_string(),
+            });
+            self.append_shell_persisted_event(ShellPersistedShellEvent::WorkflowStatusChanged {
+                run_id: run.run_id,
+                status: Self::persisted_workflow_status(run.status),
+                step_index: run.step_index,
+                reason: Some("approval_denied".to_string()),
+            });
             self.dispatch_shell_runtime_action(ShellRuntimeAction::AppendLog(format!(
                 "Workflow approval denied for {}",
                 decision.request_id
@@ -3631,6 +3819,7 @@ mod tests {
             primary_session_configured: None,
             pending_primary_events: VecDeque::new(),
             shell: None,
+            shell_event_store: None,
             workflow_run: None,
             tool_execution_mode: ToolExecutionMode::Simulated,
         }
@@ -3687,6 +3876,7 @@ mod tests {
                 primary_session_configured: None,
                 pending_primary_events: VecDeque::new(),
                 shell: None,
+                shell_event_store: None,
                 workflow_run: None,
                 tool_execution_mode: ToolExecutionMode::Simulated,
             },

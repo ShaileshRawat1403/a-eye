@@ -23,6 +23,7 @@ mod panel_journey;
 mod panel_overview;
 mod panel_tabs;
 mod panel_top_bar;
+mod persistence;
 mod policy_simulation;
 mod shell_effects;
 mod shell_layout;
@@ -33,6 +34,11 @@ mod tool_registry;
 mod ui_action;
 mod workflow;
 
+pub(crate) use persistence::PersistedExecutionMode;
+pub(crate) use persistence::PersistedPersonaPolicy;
+pub(crate) use persistence::PersistedShellEvent;
+pub(crate) use persistence::PersistedWorkflowStatus;
+pub(crate) use persistence::ShellEventStore;
 pub(crate) use policy_simulation::simulate_tool;
 pub(crate) use shell_effects::UiEffect;
 pub(crate) use shell_state::ARTIFACT_SCHEMA_V1;
@@ -57,6 +63,7 @@ pub(crate) use shell_state::VerifyCheck;
 pub(crate) use shell_state::VerifyCheckStatus;
 pub(crate) use shell_state::VerifyOverall;
 pub(crate) use shell_state::VerifyStatus;
+pub(crate) use shell_state::persona_policy_for;
 pub(crate) use tool_executor::RuntimeToolExecutor;
 pub(crate) use tool_executor::SimulatedToolExecutor;
 pub(crate) use tool_executor::ToolExecutionContext;
@@ -127,6 +134,32 @@ impl Shell {
                 None
             }
         })
+    }
+
+    pub(crate) fn persona_policy_snapshot(&self) -> PersistedPersonaPolicy {
+        PersistedPersonaPolicy {
+            tier_ceiling: self
+                .state
+                .sm
+                .persona_policy
+                .tier_ceiling
+                .label()
+                .to_string(),
+            explanation_depth: self
+                .state
+                .sm
+                .persona_policy
+                .explanation_depth
+                .label()
+                .to_string(),
+            output_format: self
+                .state
+                .sm
+                .persona_policy
+                .output_format
+                .label()
+                .to_string(),
+        }
     }
 
     pub(crate) fn handle_key_event(&mut self, key_event: KeyEvent) -> ShellInputResult {
