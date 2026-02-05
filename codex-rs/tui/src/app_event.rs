@@ -277,6 +277,7 @@ pub(crate) enum AppEvent {
     FullScreenApprovalRequest(ApprovalRequest),
 
     /// Resume an interrupted workflow run.
+    #[allow(dead_code)]
     ResumeWorkflow {
         run_id: u64,
     },

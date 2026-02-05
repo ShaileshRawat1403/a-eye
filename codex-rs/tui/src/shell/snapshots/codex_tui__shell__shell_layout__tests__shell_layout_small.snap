@@ -1,0 +1,11 @@
+---
+source: tui/src/shell/shell_layout.rs
+expression: snapshot
+---
+area=(0,0 80x20)
+top=(0,0 80x3)
+journey=(0,3 0x14)
+tabs=(0,3 80x3)
+overview=(0,6 80x5)
+chat=(0,11 80x6)
+action=(0,17 80x3)

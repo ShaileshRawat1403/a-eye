@@ -55,6 +55,7 @@ pub(crate) use shell_state::ApprovalRequestRecord;
 pub(crate) use shell_state::ApprovalRiskClass;
 pub(crate) use shell_state::ErrorKind;
 pub(crate) use shell_state::JourneyState;
+pub(crate) use shell_state::KeymapPreset;
 pub(crate) use shell_state::PolicyTier;
 pub(crate) use shell_state::RiskLevel;
 pub(crate) use shell_state::SafetyMode;
@@ -62,6 +63,7 @@ pub(crate) use shell_state::ScanStatus;
 pub(crate) use shell_state::ShellState;
 pub(crate) use shell_state::ShellTab;
 pub(crate) use shell_state::SystemArtifact;
+pub(crate) use shell_state::UsageSnapshot;
 pub(crate) use shell_state::VerifyArtifact;
 pub(crate) use shell_state::VerifyCheck;
 pub(crate) use shell_state::VerifyCheckStatus;
@@ -202,13 +204,171 @@ impl Shell {
             };
         }
 
+        if matches!(
+            self.state.interaction.overlay,
+            ShellOverlay::Onboarding { .. }
+        ) {
+            let action = match key_event.code {
+                KeyCode::Esc => Some(UserAction::CompleteOnboarding),
+                KeyCode::Left => Some(UserAction::PrevOnboardingStep),
+                KeyCode::Right | KeyCode::Enter | KeyCode::Char(' ') => {
+                    Some(UserAction::NextOnboardingStep)
+                }
+                _ => None,
+            };
+            let effects = action
+                .map(|a| self.dispatch(ShellAction::User(a)))
+                .unwrap_or_default();
+            return ShellInputResult {
+                consumed: true,
+                effects,
+            };
+        }
+
         let action = match key_event {
             KeyEvent {
-                code: KeyCode::Char('/'),
-                modifiers: KeyModifiers::CONTROL,
+                code: KeyCode::Tab,
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(UserAction::NextTab),
+            KeyEvent {
+                code: KeyCode::BackTab,
+                modifiers: KeyModifiers::SHIFT,
+                ..
+            } => Some(UserAction::CycleTheme),
+            KeyEvent {
+                code: KeyCode::F(2),
+                modifiers: KeyModifiers::NONE,
                 ..
             } => Some(UserAction::ToggleActionPalette),
-            _ => None,
+            KeyEvent {
+                code: KeyCode::Char('a'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => Some(UserAction::ToggleAutoIntentFollow),
+            KeyEvent {
+                code: KeyCode::F(3),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(UserAction::NextTab),
+            KeyEvent {
+                code: KeyCode::F(4),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(UserAction::PrevTab),
+            KeyEvent {
+                code: KeyCode::F(6),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(UserAction::CycleTheme),
+            KeyEvent {
+                code: KeyCode::F(7),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(UserAction::ToggleJourneyPanel),
+            KeyEvent {
+                code: KeyCode::F(8),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(UserAction::ToggleOverviewPanel),
+            KeyEvent {
+                code: KeyCode::F(9),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(UserAction::ToggleActionBar),
+            KeyEvent {
+                code: KeyCode::F(10),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => Some(UserAction::ToggleAutoIntentFollow),
+            _ => match self.state.customization.keymap_preset {
+                KeymapPreset::Mac => match key_event {
+                    KeyEvent {
+                        code: KeyCode::Char('a'),
+                        modifiers: KeyModifiers::ALT,
+                        ..
+                    } => Some(UserAction::ToggleActionPalette),
+                    KeyEvent {
+                        code: KeyCode::Char('l'),
+                        modifiers: KeyModifiers::ALT,
+                        ..
+                    } => Some(UserAction::NextTab),
+                    KeyEvent {
+                        code: KeyCode::Char('h'),
+                        modifiers: KeyModifiers::ALT,
+                        ..
+                    } => Some(UserAction::PrevTab),
+                    KeyEvent {
+                        code: KeyCode::Char('j'),
+                        modifiers: KeyModifiers::ALT,
+                        ..
+                    } => Some(UserAction::ToggleJourneyPanel),
+                    KeyEvent {
+                        code: KeyCode::Char('k'),
+                        modifiers: KeyModifiers::ALT,
+                        ..
+                    } => Some(UserAction::ToggleOverviewPanel),
+                    KeyEvent {
+                        code: KeyCode::Char('b'),
+                        modifiers: KeyModifiers::ALT,
+                        ..
+                    } => Some(UserAction::ToggleActionBar),
+                    KeyEvent {
+                        code: KeyCode::Char('i'),
+                        modifiers: KeyModifiers::ALT,
+                        ..
+                    } => Some(UserAction::ToggleAutoIntentFollow),
+                    KeyEvent {
+                        code: KeyCode::Char('y'),
+                        modifiers: KeyModifiers::ALT,
+                        ..
+                    } => Some(UserAction::CycleTheme),
+                    _ => None,
+                },
+                KeymapPreset::Standard | KeymapPreset::Windows => match key_event {
+                    KeyEvent {
+                        code: KeyCode::Char('/'),
+                        modifiers: KeyModifiers::CONTROL,
+                        ..
+                    } => Some(UserAction::ToggleActionPalette),
+                    KeyEvent {
+                        code: KeyCode::Right,
+                        modifiers: KeyModifiers::CONTROL,
+                        ..
+                    } => Some(UserAction::NextTab),
+                    KeyEvent {
+                        code: KeyCode::Left,
+                        modifiers: KeyModifiers::CONTROL,
+                        ..
+                    } => Some(UserAction::PrevTab),
+                    KeyEvent {
+                        code: KeyCode::Char('j'),
+                        modifiers: KeyModifiers::CONTROL,
+                        ..
+                    } => Some(UserAction::ToggleJourneyPanel),
+                    KeyEvent {
+                        code: KeyCode::Char('k'),
+                        modifiers: KeyModifiers::CONTROL,
+                        ..
+                    } => Some(UserAction::ToggleOverviewPanel),
+                    KeyEvent {
+                        code: KeyCode::Char('b'),
+                        modifiers: KeyModifiers::CONTROL,
+                        ..
+                    } => Some(UserAction::ToggleActionBar),
+                    KeyEvent {
+                        code: KeyCode::Char('i'),
+                        modifiers: KeyModifiers::CONTROL,
+                        ..
+                    } => Some(UserAction::ToggleAutoIntentFollow),
+                    KeyEvent {
+                        code: KeyCode::Char('y'),
+                        modifiers: KeyModifiers::CONTROL,
+                        ..
+                    } => Some(UserAction::CycleTheme),
+                    _ => None,
+                },
+            },
         };
 
         let consumed = action.is_some();
@@ -242,25 +402,33 @@ impl Shell {
         buffer: &mut Buffer,
         chat_widget: &ChatWidget,
     ) -> ShellRenderOutput {
-        let layout = shell_layout::compute(area);
+        let layout = shell_layout::compute(area, &self.state.customization);
+        let chat_focus_area = merged_vertical_rects(layout.overview, layout.chat);
 
         panel_top_bar::render(layout.top_bar, buffer, &self.state);
         panel_journey::render(layout.journey, buffer, &self.state);
         panel_tabs::render(layout.tabs, buffer, &self.state);
-        panel_overview::render(layout.overview, buffer, &self.state);
-        panel_action_bar::render(layout.action_bar, buffer);
-        panel_chat_adapter::render(chat_widget, layout.chat, buffer);
+        panel_action_bar::render(layout.action_bar, buffer, &self.state);
+        if matches!(self.state.routing.tab, ShellTab::Chat) {
+            panel_chat_adapter::render(chat_widget, chat_focus_area, buffer);
+        } else {
+            panel_overview::render(layout.overview, buffer, &self.state);
+            panel_chat_adapter::render(chat_widget, layout.chat, buffer);
+        }
 
-        let overlay_active = matches!(
-            self.state.interaction.overlay,
-            ShellOverlay::ActionPalette { .. }
-        );
-        if overlay_active {
-            self.render_action_palette(area, buffer);
+        let overlay_active = !matches!(self.state.interaction.overlay, ShellOverlay::None);
+        match self.state.interaction.overlay {
+            ShellOverlay::ActionPalette { .. } => self.render_action_palette(area, buffer),
+            ShellOverlay::Onboarding { .. } => self.render_onboarding(area, buffer),
+            ShellOverlay::None => {}
         }
 
         ShellRenderOutput {
-            chat_rect: layout.chat,
+            chat_rect: if matches!(self.state.routing.tab, ShellTab::Chat) {
+                chat_focus_area
+            } else {
+                layout.chat
+            },
             overlay_active,
         }
     }
@@ -300,6 +468,51 @@ impl Shell {
             .render(popup, buffer);
     }
 
+    fn render_onboarding(&self, area: Rect, buffer: &mut Buffer) {
+        let ShellOverlay::Onboarding { step } = self.state.interaction.overlay else {
+            return;
+        };
+        let pages: [(&str, &str); 4] = [
+            (
+                "Welcome to A-Eye Shell",
+                "This interface is intent-driven: it follows your task and keeps risk visible.",
+            ),
+            (
+                "Move Fast, Stay Safe",
+                "Use Ctrl+/ for actions. Approvals and policy gates protect risky operations.",
+            ),
+            (
+                "Customize Your View",
+                "Use Tab to move tabs. Use Shift+Tab to cycle themes quickly.",
+            ),
+            (
+                "Non-dev Friendly Flow",
+                "Journey guides you from Idea -> Verify. Press Shift+? for shortcuts and guide.",
+            ),
+        ];
+        let idx = step.min(pages.len().saturating_sub(1));
+        let popup = centered_rect(area, 72, 46);
+        Clear.render(popup, buffer);
+        let (title, body) = pages[idx];
+        let lines = vec![
+            Line::from(vec![
+                "Step ".dim(),
+                format!("{}/{}", idx + 1, pages.len()).bold(),
+            ]),
+            "".into(),
+            Line::from(title.bold().cyan()),
+            "".into(),
+            Line::from(body),
+            "".into(),
+            "[Left/Right] navigate  [Enter] next  [Esc] close"
+                .dim()
+                .into(),
+        ];
+        Paragraph::new(lines)
+            .block(Block::default().title(" Onboarding ").borders(Borders::ALL))
+            .render(popup, buffer);
+    }
+
     #[cfg(test)]
     pub(crate) fn state_mut(&mut self) -> &mut ShellState {
         &mut self.state
@@ -328,6 +541,25 @@ fn centered_rect(area: Rect, width_percent: u16, height_percent: u16) -> Rect {
     horizontal[1]
 }
 
+fn merged_vertical_rects(top: Rect, bottom: Rect) -> Rect {
+    if top.height == 0 {
+        return bottom;
+    }
+    if bottom.height == 0 {
+        return top;
+    }
+
+    let left = top.x.min(bottom.x);
+    let width = top.width.max(bottom.width);
+    let y = top.y.min(bottom.y);
+    let bottom_edge = top
+        .y
+        .saturating_add(top.height)
+        .max(bottom.y.saturating_add(bottom.height));
+
+    Rect::new(left, y, width, bottom_edge.saturating_sub(y))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -349,6 +581,9 @@ mod tests {
             "project".to_string(),
             Personality::Friendly,
         ));
+        shell.dispatch(ShellAction::Runtime(RuntimeAction::SetKeymapPreset(
+            KeymapPreset::Standard,
+        )));
         let result =
             shell.handle_key_event(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::CONTROL));
         assert!(result.consumed);
@@ -356,6 +591,43 @@ mod tests {
             shell.state_mut().interaction.overlay,
             ShellOverlay::ActionPalette { .. }
         ));
+    }
+
+    #[test]
+    fn f2_opens_action_palette() {
+        let mut shell = Shell::new(ShellState::new(
+            "project".to_string(),
+            Personality::Friendly,
+        ));
+        let result = shell.handle_key_event(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
+        assert!(result.consumed);
+        assert!(matches!(
+            shell.state_mut().interaction.overlay,
+            ShellOverlay::ActionPalette { .. }
+        ));
+    }
+
+    #[test]
+    fn ctrl_a_toggles_intent_follow() {
+        let mut shell = Shell::new(ShellState::new(
+            "project".to_string(),
+            Personality::Friendly,
+        ));
+        let initial = shell.state_mut().customization.auto_follow_intent;
+        let result =
+            shell.handle_key_event(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
+        assert!(result.consumed);
+        assert_ne!(shell.state_mut().customization.auto_follow_intent, initial);
+    }
+
+    #[test]
+    fn question_mark_passthrough_for_chat_shortcuts() {
+        let mut shell = Shell::new(ShellState::new(
+            "project".to_string(),
+            Personality::Friendly,
+        ));
+        let result = shell.handle_key_event(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT));
+        assert!(!result.consumed);
     }
 
     #[test]

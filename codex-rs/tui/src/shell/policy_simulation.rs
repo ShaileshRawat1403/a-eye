@@ -14,6 +14,7 @@ pub(crate) struct ToolPolicyOutcome {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
 pub(crate) struct PolicySimulationReport {
     pub(crate) outcomes: Vec<ToolPolicyOutcome>,
     pub(crate) allow_count: usize,
@@ -48,6 +49,7 @@ pub(crate) fn simulate_tool(policy_tier: PolicyTier, tool_id: ToolId) -> ToolPol
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn simulate_tools(
     policy_tier: PolicyTier,
     tool_ids: &[ToolId],

@@ -27,6 +27,7 @@ pub(crate) fn render(area: Rect, buffer: &mut Buffer, state: &ShellState) {
     }
 
     let mut lines = Vec::new();
+    let accent = state.customization.theme.accent();
     let current_idx = JOURNEY
         .iter()
         .position(|step| *step == state.routing.journey)
@@ -39,7 +40,7 @@ pub(crate) fn render(area: Rect, buffer: &mut Buffer, state: &ShellState) {
         } else if idx == current_idx && failed {
             "x".red()
         } else if idx == current_idx {
-            ">".cyan()
+            ">".fg(accent)
         } else {
             " ".dim()
         };

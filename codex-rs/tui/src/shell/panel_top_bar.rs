@@ -11,8 +11,10 @@ use ratatui::widgets::Widget;
 use super::shell_state::ShellState;
 
 pub(crate) fn render(area: Rect, buffer: &mut Buffer, state: &ShellState) {
+    let accent = state.customization.theme.accent();
+    let usage = usage_summary(state);
     let line = Line::from(vec![
-        "A-Eye".bold().cyan(),
+        "A-Eye".bold().fg(accent),
         " | Project: ".dim(),
         state.header.project_name.as_ref().into(),
         " | Mode: ".dim(),
@@ -27,6 +29,18 @@ pub(crate) fn render(area: Rect, buffer: &mut Buffer, state: &ShellState) {
         state.header.risk.label().into(),
         " | Journey: ".dim(),
         state.journey_status.state.label().into(),
+        " | Theme: ".dim(),
+        state.customization.theme.label().into(),
+        " | Keys: ".dim(),
+        state.customization.keymap_preset.label().into(),
+        " | Intent: ".dim(),
+        if state.customization.auto_follow_intent {
+            "auto".green()
+        } else {
+            "manual".magenta()
+        },
+        " | Usage: ".dim(),
+        usage.into(),
         " | SME: ".dim(),
         format!(
             "{} • {} • {}",
@@ -43,4 +57,32 @@ pub(crate) fn render(area: Rect, buffer: &mut Buffer, state: &ShellState) {
                 .border_type(BorderType::Rounded),
         )
         .render(area, buffer);
+}
+
+fn usage_summary(state: &ShellState) -> String {
+    let mut parts = Vec::new();
+    if let Some(context) = state.usage.context_remaining_percent {
+        parts.push(format!("ctx {context}%"));
+    }
+    if let (Some(label), Some(percent)) = (
+        state.usage.primary_window_label.as_ref(),
+        state.usage.primary_remaining_percent,
+    ) {
+        parts.push(format!("{label} {percent}%"));
+    }
+    if let (Some(label), Some(percent)) = (
+        state.usage.secondary_window_label.as_ref(),
+        state.usage.secondary_remaining_percent,
+    ) {
+        parts.push(format!("{label} {percent}%"));
+    }
+    if let Some(credits) = state.usage.credits_label.as_ref() {
+        parts.push(format!("credits {credits}"));
+    }
+
+    if parts.is_empty() {
+        "n/a".to_string()
+    } else {
+        parts.join(" • ")
+    }
 }

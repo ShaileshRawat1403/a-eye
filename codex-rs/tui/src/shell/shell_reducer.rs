@@ -63,6 +63,64 @@ fn reduce_user(state: &mut ShellState, action: UserAction) -> Vec<UiEffect> {
             };
             vec![UiEffect::RequestFrame]
         }
+        UserAction::ShowOnboarding => {
+            state.interaction.overlay = ShellOverlay::Onboarding { step: 0 };
+            vec![UiEffect::RequestFrame]
+        }
+        UserAction::NextOnboardingStep => {
+            if let ShellOverlay::Onboarding { step } = &mut state.interaction.overlay {
+                if *step >= 3 {
+                    state.interaction.overlay = ShellOverlay::None;
+                } else {
+                    *step += 1;
+                }
+                return vec![UiEffect::RequestFrame];
+            }
+            Vec::new()
+        }
+        UserAction::PrevOnboardingStep => {
+            if let ShellOverlay::Onboarding { step } = &mut state.interaction.overlay {
+                *step = step.saturating_sub(1);
+                return vec![UiEffect::RequestFrame];
+            }
+            Vec::new()
+        }
+        UserAction::CompleteOnboarding => {
+            state.interaction.overlay = ShellOverlay::None;
+            vec![UiEffect::RequestFrame]
+        }
+        UserAction::SetKeymapPreset(preset) => {
+            state.customization.keymap_preset = preset;
+            vec![UiEffect::RequestFrame]
+        }
+        UserAction::CycleKeymapPreset => {
+            state.customization.keymap_preset = state.customization.keymap_preset.next();
+            vec![UiEffect::RequestFrame]
+        }
+        UserAction::SetTheme(theme) => {
+            state.customization.theme = theme;
+            vec![UiEffect::RequestFrame]
+        }
+        UserAction::CycleTheme => {
+            state.customization.theme = state.customization.theme.next();
+            vec![UiEffect::RequestFrame]
+        }
+        UserAction::ToggleJourneyPanel => {
+            state.customization.show_journey = !state.customization.show_journey;
+            vec![UiEffect::RequestFrame]
+        }
+        UserAction::ToggleOverviewPanel => {
+            state.customization.show_overview = !state.customization.show_overview;
+            vec![UiEffect::RequestFrame]
+        }
+        UserAction::ToggleActionBar => {
+            state.customization.show_action_bar = !state.customization.show_action_bar;
+            vec![UiEffect::RequestFrame]
+        }
+        UserAction::ToggleAutoIntentFollow => {
+            state.customization.auto_follow_intent = !state.customization.auto_follow_intent;
+            vec![UiEffect::RequestFrame]
+        }
         UserAction::CloseOverlay => {
             state.interaction.overlay = ShellOverlay::None;
             vec![UiEffect::RequestFrame]
@@ -151,7 +209,7 @@ fn reduce_user(state: &mut ShellState, action: UserAction) -> Vec<UiEffect> {
             };
             let command = PALETTE_ITEMS[palette_idx].command;
             state.interaction.overlay = ShellOverlay::None;
-            let mut effects = command_to_effects(command);
+            let mut effects = command_to_effects(state, command);
             effects.push(UiEffect::RequestFrame);
             effects
         }
@@ -187,9 +245,41 @@ fn reduce_user(state: &mut ShellState, action: UserAction) -> Vec<UiEffect> {
     }
 }
 
-fn command_to_effects(command: PaletteCommand) -> Vec<UiEffect> {
+fn command_to_effects(state: &mut ShellState, command: PaletteCommand) -> Vec<UiEffect> {
     match command {
         PaletteCommand::ContinueInChat => Vec::new(),
+        PaletteCommand::ShowOnboarding => {
+            state.interaction.overlay = ShellOverlay::Onboarding { step: 0 };
+            Vec::new()
+        }
+        PaletteCommand::SetKeymapPreset(preset) => {
+            state.customization.keymap_preset = preset;
+            Vec::new()
+        }
+        PaletteCommand::SetTheme(theme) => {
+            state.customization.theme = theme;
+            Vec::new()
+        }
+        PaletteCommand::CycleTheme => {
+            state.customization.theme = state.customization.theme.next();
+            Vec::new()
+        }
+        PaletteCommand::ToggleJourneyPanel => {
+            state.customization.show_journey = !state.customization.show_journey;
+            Vec::new()
+        }
+        PaletteCommand::ToggleOverviewPanel => {
+            state.customization.show_overview = !state.customization.show_overview;
+            Vec::new()
+        }
+        PaletteCommand::ToggleActionBar => {
+            state.customization.show_action_bar = !state.customization.show_action_bar;
+            Vec::new()
+        }
+        PaletteCommand::ToggleAutoIntentFollow => {
+            state.customization.auto_follow_intent = !state.customization.auto_follow_intent;
+            Vec::new()
+        }
         PaletteCommand::OpenPermissions => {
             vec![UiEffect::EmitAppEvent(Box::new(
                 AppEvent::OpenPermissionsPopup,
@@ -209,6 +299,19 @@ fn command_to_effects(command: PaletteCommand) -> Vec<UiEffect> {
         PaletteCommand::Quit => vec![UiEffect::EmitAppEvent(Box::new(AppEvent::Exit(
             ExitMode::ShutdownFirst,
         )))],
+    }
+}
+
+fn tab_for_journey(state: JourneyState) -> super::shell_state::ShellTab {
+    match state {
+        JourneyState::Idle => super::shell_state::ShellTab::Chat,
+        JourneyState::Scanning => super::shell_state::ShellTab::System,
+        JourneyState::Planning => super::shell_state::ShellTab::Plan,
+        JourneyState::Diffing | JourneyState::ReviewReady => super::shell_state::ShellTab::Diff,
+        JourneyState::AwaitingApproval | JourneyState::Verifying | JourneyState::Failed => {
+            super::shell_state::ShellTab::Logs
+        }
+        JourneyState::Completed => super::shell_state::ShellTab::Explain,
     }
 }
 
@@ -239,6 +342,12 @@ fn reduce_runtime(state: &mut ShellState, action: RuntimeAction) {
         }
         RuntimeAction::SetRiskLevel(level) => {
             state.header.risk = level;
+        }
+        RuntimeAction::SetUsage(snapshot) => {
+            state.usage = snapshot;
+        }
+        RuntimeAction::SetKeymapPreset(preset) => {
+            state.customization.keymap_preset = preset;
         }
         RuntimeAction::SetPersonality(personality) => {
             state.sm.personality = personality;
@@ -274,7 +383,7 @@ fn reduce_runtime(state: &mut ShellState, action: RuntimeAction) {
             state.sm.reasoning_effort = effort;
         }
         RuntimeAction::SetTab(tab) => {
-            state.routing.tab = tab;
+            maybe_follow_tab(state, tab);
         }
         RuntimeAction::SetJourney(_) => {}
         RuntimeAction::SetJourneyState(next) => {
@@ -346,7 +455,9 @@ fn reduce_runtime(state: &mut ShellState, action: RuntimeAction) {
                 .map(|a| (a.run_id, a.artifact_id));
             if artifact_is_newer(artifact.run_id, artifact.artifact_id, current) {
                 state.artifacts.system = Some(artifact);
-                if matches!(state.routing.tab, super::shell_state::ShellTab::Overview) {
+                if matches!(state.routing.tab, super::shell_state::ShellTab::Overview)
+                    && state.customization.auto_follow_intent
+                {
                     state.routing.tab = super::shell_state::ShellTab::System;
                 }
                 dirty = true;
@@ -364,7 +475,8 @@ fn reduce_runtime(state: &mut ShellState, action: RuntimeAction) {
                 if matches!(
                     state.routing.tab,
                     super::shell_state::ShellTab::Overview | super::shell_state::ShellTab::System
-                ) {
+                ) && state.customization.auto_follow_intent
+                {
                     state.routing.tab = super::shell_state::ShellTab::Plan;
                 }
                 dirty = true;
@@ -379,7 +491,7 @@ fn reduce_runtime(state: &mut ShellState, action: RuntimeAction) {
             if artifact_is_newer(artifact.run_id, artifact.artifact_id, current) {
                 state.artifacts.diff = Some(artifact);
                 reconcile_selected_diff_file(state);
-                state.routing.tab = super::shell_state::ShellTab::Diff;
+                maybe_follow_tab(state, super::shell_state::ShellTab::Diff);
                 dirty = true;
             }
         }
@@ -669,6 +781,15 @@ fn recompute_journey(state: &mut ShellState) {
     state.journey_status.step = projection.step;
     state.journey_status.active_run_id = projection.active_run_id;
     state.routing.journey = projection.step;
+    if state.customization.auto_follow_intent {
+        state.routing.tab = tab_for_journey(projection.state);
+    }
+}
+
+fn maybe_follow_tab(state: &mut ShellState, tab: super::shell_state::ShellTab) {
+    if state.customization.auto_follow_intent {
+        state.routing.tab = tab;
+    }
 }
 
 fn refresh_persona_policy(state: &mut ShellState) {

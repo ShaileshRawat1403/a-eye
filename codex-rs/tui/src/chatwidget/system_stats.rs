@@ -17,9 +17,12 @@ const GPU_REFRESH_INTERVAL: Duration = Duration::from_secs(4);
 pub(crate) struct SystemStatsSnapshot {
     pub(crate) cpu_percent: Option<f32>,
     pub(crate) memory_percent: Option<f32>,
+    #[allow(dead_code)]
     pub(crate) memory_used_gib: Option<f32>,
+    #[allow(dead_code)]
     pub(crate) memory_total_gib: Option<f32>,
     pub(crate) gpu_percent: Option<f32>,
+    #[allow(dead_code)]
     pub(crate) gpu_source: Option<&'static str>,
 }
 

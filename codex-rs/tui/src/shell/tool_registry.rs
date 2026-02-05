@@ -65,6 +65,7 @@ pub(crate) struct ToolInvocation {
 pub(crate) enum ToolInvocationStatus {
     Succeeded,
     Failed,
+    #[allow(dead_code)]
     Blocked,
 }
 
@@ -128,6 +129,7 @@ const TOOL_SPECS: [ToolSpec; 4] = [
 ];
 
 impl ToolRegistry {
+    #[allow(dead_code)]
     pub(crate) fn list() -> &'static [ToolSpec] {
         &TOOL_SPECS
     }
@@ -145,6 +147,7 @@ impl ToolRegistry {
         Self::get(id).risk_class
     }
 
+    #[allow(dead_code)]
     pub(crate) fn min_tier(id: ToolId) -> PolicyTier {
         Self::get(id).min_tier
     }

@@ -14,6 +14,10 @@ codex *args:
 exec *args:
     cargo run --bin codex -- exec "$@"
 
+# Launch A-Eye TUI shell with shell UX and persistence enabled.
+a-eye *args:
+    A_EYE_SHELL_V1=1 A_EYE_SHELL_PERSIST=1 cargo run -p codex-tui --bin codex-tui -- "$@"
+
 # Run the CLI version of the file-search crate.
 file-search *args:
     cargo run --bin codex-file-search -- "$@"

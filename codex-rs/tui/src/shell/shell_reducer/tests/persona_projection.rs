@@ -7,12 +7,13 @@ fn run_user(state: &mut ShellState, action: UserAction) {
 }
 
 #[test]
-fn pragmatic_persona_defaults_to_diff_tab_priority() {
+fn pragmatic_persona_defaults_to_chat_first_tab_priority() {
     let state = ShellState::new("project".to_string(), Personality::Pragmatic);
-    assert_eq!(state.routing.tab, ShellTab::Diff);
+    assert_eq!(state.routing.tab, ShellTab::Chat);
     assert_eq!(
         state.ordered_tabs(),
         &[
+            ShellTab::Chat,
             ShellTab::Diff,
             ShellTab::Logs,
             ShellTab::Plan,
@@ -28,10 +29,10 @@ fn next_prev_tab_follow_persona_ordering() {
     let mut state = ShellState::new("project".to_string(), Personality::Pragmatic);
 
     run_user(&mut state, UserAction::NextTab);
-    assert_eq!(state.routing.tab, ShellTab::Logs);
+    assert_eq!(state.routing.tab, ShellTab::Diff);
 
     run_user(&mut state, UserAction::PrevTab);
-    assert_eq!(state.routing.tab, ShellTab::Diff);
+    assert_eq!(state.routing.tab, ShellTab::Chat);
 }
 
 #[test]

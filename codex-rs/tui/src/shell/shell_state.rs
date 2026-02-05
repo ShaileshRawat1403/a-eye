@@ -7,6 +7,7 @@ use std::sync::Arc;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::Personality;
 use codex_protocol::openai_models::ReasoningEffort;
+use ratatui::style::Color;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SchemaVersion(pub(crate) u16);
@@ -23,6 +24,7 @@ pub(crate) enum ClearReason {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ShellTab {
+    Chat,
     Overview,
     System,
     Plan,
@@ -34,18 +36,20 @@ pub(crate) enum ShellTab {
 impl ShellTab {
     pub(crate) fn next(self) -> Self {
         match self {
+            Self::Chat => Self::Overview,
             Self::Overview => Self::System,
             Self::System => Self::Plan,
             Self::Plan => Self::Diff,
             Self::Diff => Self::Explain,
             Self::Explain => Self::Logs,
-            Self::Logs => Self::Overview,
+            Self::Logs => Self::Chat,
         }
     }
 
     pub(crate) fn prev(self) -> Self {
         match self {
-            Self::Overview => Self::Logs,
+            Self::Chat => Self::Logs,
+            Self::Overview => Self::Chat,
             Self::System => Self::Overview,
             Self::Plan => Self::System,
             Self::Diff => Self::Plan,
@@ -56,6 +60,7 @@ impl ShellTab {
 
     pub(crate) fn label(self) -> &'static str {
         match self {
+            Self::Chat => "Chat",
             Self::Overview => "Overview",
             Self::System => "System",
             Self::Plan => "Plan",
@@ -398,7 +403,73 @@ impl Default for ApprovalState {
 pub(crate) enum ShellOverlay {
     None,
     ActionPalette { selected: usize, query: Arc<str> },
-    ConfirmQuit,
+    Onboarding { step: usize },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UiTheme {
+    Classic,
+    Cyberpunk,
+    NeonNoir,
+    SolarFlare,
+    ForestZen,
+}
+
+impl UiTheme {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Classic => "classic",
+            Self::Cyberpunk => "cyberpunk",
+            Self::NeonNoir => "neon-noir",
+            Self::SolarFlare => "solar-flare",
+            Self::ForestZen => "forest-zen",
+        }
+    }
+
+    pub(crate) fn next(self) -> Self {
+        match self {
+            Self::Classic => Self::Cyberpunk,
+            Self::Cyberpunk => Self::NeonNoir,
+            Self::NeonNoir => Self::SolarFlare,
+            Self::SolarFlare => Self::ForestZen,
+            Self::ForestZen => Self::Classic,
+        }
+    }
+
+    pub(crate) fn accent(self) -> Color {
+        match self {
+            Self::Classic => Color::Cyan,
+            Self::Cyberpunk => Color::Magenta,
+            Self::NeonNoir => Color::LightBlue,
+            Self::SolarFlare => Color::LightYellow,
+            Self::ForestZen => Color::LightGreen,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum KeymapPreset {
+    Standard,
+    Mac,
+    Windows,
+}
+
+impl KeymapPreset {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Mac => "mac",
+            Self::Windows => "windows",
+        }
+    }
+
+    pub(crate) fn next(self) -> Self {
+        match self {
+            Self::Standard => Self::Mac,
+            Self::Mac => Self::Windows,
+            Self::Windows => Self::Standard,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -421,6 +492,27 @@ pub(crate) struct ShellRouting {
 pub(crate) struct ShellInteraction {
     pub(crate) overlay: ShellOverlay,
     pub(crate) focus_in_chat: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ShellCustomization {
+    pub(crate) theme: UiTheme,
+    pub(crate) keymap_preset: KeymapPreset,
+    pub(crate) show_journey: bool,
+    pub(crate) show_overview: bool,
+    pub(crate) show_action_bar: bool,
+    pub(crate) auto_follow_intent: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct UsageSnapshot {
+    pub(crate) context_remaining_percent: Option<i64>,
+    pub(crate) total_tokens: Option<i64>,
+    pub(crate) primary_window_label: Option<Arc<str>>,
+    pub(crate) primary_remaining_percent: Option<u8>,
+    pub(crate) secondary_window_label: Option<Arc<str>>,
+    pub(crate) secondary_remaining_percent: Option<u8>,
+    pub(crate) credits_label: Option<Arc<str>>,
 }
 
 #[derive(Debug, Clone)]
@@ -768,9 +860,11 @@ pub(crate) struct ShellSelection {
 #[derive(Debug, Clone)]
 pub(crate) struct ShellState {
     pub(crate) header: ShellHeader,
+    pub(crate) usage: UsageSnapshot,
     pub(crate) routing: ShellRouting,
     pub(crate) journey_status: JourneyStatus,
     pub(crate) interaction: ShellInteraction,
+    pub(crate) customization: ShellCustomization,
     pub(crate) sm: SubjectMatterState,
     pub(crate) artifacts: ShellArtifacts,
     pub(crate) runtime_flags: RuntimeFlags,
@@ -783,6 +877,7 @@ pub(crate) struct ShellState {
 const FRIENDLY_VISIBLE_TOOLS: &[&str] = &["scan_repo", "generate_plan", "verify"];
 const PRAGMATIC_VISIBLE_TOOLS: &[&str] = &["scan_repo", "generate_plan", "compute_diff", "verify"];
 const FRIENDLY_TAB_ORDER: &[ShellTab] = &[
+    ShellTab::Chat,
     ShellTab::Overview,
     ShellTab::Plan,
     ShellTab::Explain,
@@ -791,6 +886,7 @@ const FRIENDLY_TAB_ORDER: &[ShellTab] = &[
     ShellTab::System,
 ];
 const PRAGMATIC_TAB_ORDER: &[ShellTab] = &[
+    ShellTab::Chat,
     ShellTab::Diff,
     ShellTab::Logs,
     ShellTab::Plan,
@@ -846,6 +942,7 @@ impl ShellState {
                 verify: VerifyStatus::NotRun,
                 risk: RiskLevel::Low,
             },
+            usage: UsageSnapshot::default(),
             routing: ShellRouting {
                 journey: JourneyStep::Idea,
                 tab: persona_policy_defaults.tab_order[0],
@@ -859,6 +956,18 @@ impl ShellState {
             interaction: ShellInteraction {
                 overlay: ShellOverlay::None,
                 focus_in_chat: true,
+            },
+            customization: ShellCustomization {
+                theme: UiTheme::Classic,
+                keymap_preset: if cfg!(target_os = "macos") {
+                    KeymapPreset::Mac
+                } else {
+                    KeymapPreset::Standard
+                },
+                show_journey: true,
+                show_overview: false,
+                show_action_bar: true,
+                auto_follow_intent: false,
             },
             sm: SubjectMatterState {
                 personality,

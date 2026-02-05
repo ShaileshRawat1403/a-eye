@@ -18,6 +18,7 @@ use super::shell_state::ExplanationDepth;
 use super::shell_state::JourneyError;
 use super::shell_state::JourneyState;
 use super::shell_state::JourneyStep;
+use super::shell_state::KeymapPreset;
 use super::shell_state::LogEntry;
 use super::shell_state::LogLevel;
 use super::shell_state::PersonaOutputFormat;
@@ -28,6 +29,8 @@ use super::shell_state::SafetyMode;
 use super::shell_state::ScanStatus;
 use super::shell_state::ShellTab;
 use super::shell_state::SystemArtifact;
+use super::shell_state::UiTheme;
+use super::shell_state::UsageSnapshot;
 use super::shell_state::VerifyArtifact;
 use super::shell_state::VerifyStatus;
 
@@ -40,6 +43,18 @@ pub(crate) enum ShellAction {
 #[derive(Debug, Clone)]
 pub(crate) enum UserAction {
     ToggleActionPalette,
+    ShowOnboarding,
+    NextOnboardingStep,
+    PrevOnboardingStep,
+    CompleteOnboarding,
+    SetKeymapPreset(KeymapPreset),
+    CycleKeymapPreset,
+    SetTheme(UiTheme),
+    CycleTheme,
+    ToggleJourneyPanel,
+    ToggleOverviewPanel,
+    ToggleActionBar,
+    ToggleAutoIntentFollow,
     CloseOverlay,
     NextTab,
     PrevTab,
@@ -94,6 +109,8 @@ pub(crate) enum RuntimeAction {
     SetApplyStatus(ApplyStatus),
     SetVerifyStatus(VerifyStatus),
     SetRiskLevel(RiskLevel),
+    SetUsage(UsageSnapshot),
+    SetKeymapPreset(KeymapPreset),
     SetPersonality(Personality),
     SetPersonaTierCeilingOverride(Option<PolicyTier>),
     SetPersonaExplanationDepthOverride(Option<ExplanationDepth>),
@@ -155,6 +172,14 @@ pub(crate) enum RuntimeAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PaletteCommand {
     ContinueInChat,
+    ShowOnboarding,
+    SetKeymapPreset(KeymapPreset),
+    SetTheme(UiTheme),
+    CycleTheme,
+    ToggleJourneyPanel,
+    ToggleOverviewPanel,
+    ToggleActionBar,
+    ToggleAutoIntentFollow,
     OpenPermissions,
     OpenApprovals,
     OpenSkills,
@@ -168,10 +193,66 @@ pub(crate) struct PaletteItem {
     pub(crate) command: PaletteCommand,
 }
 
-pub(crate) const PALETTE_ITEMS: [PaletteItem; 6] = [
+pub(crate) const PALETTE_ITEMS: [PaletteItem; 20] = [
     PaletteItem {
         label: "Continue in chat",
         command: PaletteCommand::ContinueInChat,
+    },
+    PaletteItem {
+        label: "Show onboarding guide",
+        command: PaletteCommand::ShowOnboarding,
+    },
+    PaletteItem {
+        label: "Keymap: Standard",
+        command: PaletteCommand::SetKeymapPreset(KeymapPreset::Standard),
+    },
+    PaletteItem {
+        label: "Keymap: Mac",
+        command: PaletteCommand::SetKeymapPreset(KeymapPreset::Mac),
+    },
+    PaletteItem {
+        label: "Keymap: Windows",
+        command: PaletteCommand::SetKeymapPreset(KeymapPreset::Windows),
+    },
+    PaletteItem {
+        label: "Theme: Classic",
+        command: PaletteCommand::SetTheme(UiTheme::Classic),
+    },
+    PaletteItem {
+        label: "Theme: Cyberpunk",
+        command: PaletteCommand::SetTheme(UiTheme::Cyberpunk),
+    },
+    PaletteItem {
+        label: "Theme: Neon Noir",
+        command: PaletteCommand::SetTheme(UiTheme::NeonNoir),
+    },
+    PaletteItem {
+        label: "Theme: Solar Flare",
+        command: PaletteCommand::SetTheme(UiTheme::SolarFlare),
+    },
+    PaletteItem {
+        label: "Theme: Forest Zen",
+        command: PaletteCommand::SetTheme(UiTheme::ForestZen),
+    },
+    PaletteItem {
+        label: "Switch theme",
+        command: PaletteCommand::CycleTheme,
+    },
+    PaletteItem {
+        label: "Toggle journey rail",
+        command: PaletteCommand::ToggleJourneyPanel,
+    },
+    PaletteItem {
+        label: "Toggle context panel",
+        command: PaletteCommand::ToggleOverviewPanel,
+    },
+    PaletteItem {
+        label: "Toggle action bar",
+        command: PaletteCommand::ToggleActionBar,
+    },
+    PaletteItem {
+        label: "Toggle intent auto-follow",
+        command: PaletteCommand::ToggleAutoIntentFollow,
     },
     PaletteItem {
         label: "Open permissions",

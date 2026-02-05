@@ -20,7 +20,12 @@ pub(crate) fn render(area: Rect, buffer: &mut Buffer, state: &ShellState) {
     }
 
     let lines = match state.routing.tab {
+        ShellTab::Chat => vec!["Chat stream is active below.".dim().into()],
         ShellTab::Overview => {
+            let effective_tier = effective_policy_tier(
+                state.approval.policy_tier,
+                state.sm.persona_policy.tier_ceiling,
+            );
             let gate = state
                 .approval
                 .last_gate
@@ -58,6 +63,8 @@ pub(crate) fn render(area: Rect, buffer: &mut Buffer, state: &ShellState) {
                 Line::from(vec![
                     "Policy: ".dim(),
                     state.approval.policy_tier.label().into(),
+                    " • Effective: ".dim(),
+                    effective_tier.label().cyan(),
                     " • Gate: ".dim(),
                     gate.into(),
                     " • Approval: ".dim(),
@@ -81,6 +88,23 @@ pub(crate) fn render(area: Rect, buffer: &mut Buffer, state: &ShellState) {
                         "defaults+overrides".magenta()
                     },
                 ]),
+                Line::from(vec![
+                    "UX: ".dim(),
+                    format!(
+                        "theme={} journey={} context={} keymap={} intent={}",
+                        state.customization.theme.label(),
+                        state.customization.show_journey as u8,
+                        state.customization.show_overview as u8,
+                        state.customization.keymap_preset.label(),
+                        if state.customization.auto_follow_intent {
+                            "auto"
+                        } else {
+                            "manual"
+                        }
+                    )
+                    .into(),
+                ]),
+                Line::from(vec!["Usage: ".dim(), usage_details(state).into()]),
             ]
         }
         ShellTab::System => render_system(state),
@@ -93,6 +117,48 @@ pub(crate) fn render(area: Rect, buffer: &mut Buffer, state: &ShellState) {
     Paragraph::new(lines)
         .block(Block::default().title(" Context ").borders(Borders::ALL))
         .render(area, buffer);
+}
+
+fn effective_policy_tier(
+    policy_tier: super::shell_state::PolicyTier,
+    tier_ceiling: super::shell_state::PolicyTier,
+) -> super::shell_state::PolicyTier {
+    use super::shell_state::PolicyTier;
+    match (policy_tier, tier_ceiling) {
+        (PolicyTier::Strict, _) | (_, PolicyTier::Strict) => PolicyTier::Strict,
+        (PolicyTier::Balanced, _) | (_, PolicyTier::Balanced) => PolicyTier::Balanced,
+        (PolicyTier::Permissive, PolicyTier::Permissive) => PolicyTier::Permissive,
+    }
+}
+
+fn usage_details(state: &ShellState) -> String {
+    let mut parts = Vec::new();
+    if let Some(tokens) = state.usage.total_tokens {
+        parts.push(format!("total={tokens}"));
+    }
+    if let Some(ctx) = state.usage.context_remaining_percent {
+        parts.push(format!("context_left={ctx}%"));
+    }
+    if let (Some(label), Some(percent)) = (
+        state.usage.primary_window_label.as_ref(),
+        state.usage.primary_remaining_percent,
+    ) {
+        parts.push(format!("{label}_left={percent}%"));
+    }
+    if let (Some(label), Some(percent)) = (
+        state.usage.secondary_window_label.as_ref(),
+        state.usage.secondary_remaining_percent,
+    ) {
+        parts.push(format!("{label}_left={percent}%"));
+    }
+    if let Some(credits) = state.usage.credits_label.as_ref() {
+        parts.push(format!("credits={credits}"));
+    }
+    if parts.is_empty() {
+        "none".to_string()
+    } else {
+        parts.join(" • ")
+    }
 }
 
 fn render_system(state: &ShellState) -> Vec<Line<'static>> {

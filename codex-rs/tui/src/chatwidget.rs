@@ -6524,6 +6524,14 @@ impl ChatWidget {
             .unwrap_or_default()
     }
 
+    pub(crate) fn shell_insights(&self) -> HomePanelInsights {
+        self.home_panel_insights()
+    }
+
+    pub(crate) fn rate_limit_snapshot(&self) -> Option<&RateLimitSnapshotDisplay> {
+        self.rate_limit_snapshot.as_ref()
+    }
+
     pub(crate) fn thread_id(&self) -> Option<ThreadId> {
         self.thread_id
     }

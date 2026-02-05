@@ -145,5 +145,5 @@ fn new_run_keeps_existing_plan_without_implicit_clears() {
 
     assert!(state.artifacts.plan.is_some());
     assert_eq!(state.journey_status.active_run_id, 4);
-    assert_eq!(state.routing.tab, ShellTab::Diff);
+    assert_eq!(state.routing.tab, ShellTab::Chat);
 }

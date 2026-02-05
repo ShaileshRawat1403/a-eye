@@ -11,12 +11,13 @@ use super::shell_state::ShellState;
 
 pub(crate) fn render(area: Rect, buffer: &mut Buffer, state: &ShellState) {
     let mut spans = Vec::new();
+    let accent = state.customization.theme.accent();
     for (idx, tab) in state.ordered_tabs().iter().enumerate() {
         if idx > 0 {
             spans.push(" | ".dim());
         }
         if *tab == state.routing.tab {
-            spans.push(tab.label().cyan().bold());
+            spans.push(tab.label().fg(accent).bold());
         } else {
             spans.push(tab.label().dim());
         }

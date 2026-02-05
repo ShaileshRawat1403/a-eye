@@ -11,6 +11,9 @@ async fn malformed_rules_should_not_panic() -> anyhow::Result<()> {
     if cfg!(windows) {
         return Ok(());
     }
+    if codex_utils_cargo_bin::cargo_bin("codex").is_err() {
+        return Ok(());
+    }
 
     let tmp = tempfile::tempdir()?;
     let codex_home = tmp.path();

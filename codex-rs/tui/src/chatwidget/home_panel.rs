@@ -52,7 +52,9 @@ pub(crate) enum HomePanelScreen {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct HomePanelInsights {
     pub(crate) tokens_per_second: Option<f32>,
+    #[allow(dead_code)]
     pub(crate) total_tokens: Option<i64>,
+    #[allow(dead_code)]
     pub(crate) output_tokens: Option<i64>,
     pub(crate) context_remaining_percent: Option<i64>,
 }

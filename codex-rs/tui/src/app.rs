@@ -13,6 +13,7 @@ use crate::bottom_pane::SelectionViewParams;
 use crate::bottom_pane::popup_consts::standard_popup_hint_line;
 use crate::chatwidget::ChatWidget;
 use crate::chatwidget::ExternalEditorState;
+use crate::chatwidget::get_limits_duration;
 use crate::cwd_prompt::CwdPromptAction;
 use crate::diff_render::DiffSummary;
 use crate::exec_command::strip_bash_lc_and_escape;
@@ -66,6 +67,7 @@ use crate::shell::ToolInvocation as ShellToolInvocation;
 use crate::shell::ToolInvocationStatus as ShellToolInvocationStatus;
 use crate::shell::ToolRegistry as ShellToolRegistry;
 use crate::shell::ToolResult as ShellToolResult;
+use crate::shell::UsageSnapshot as ShellUsageSnapshot;
 use crate::shell::VerifyArtifact as ShellVerifyArtifact;
 use crate::shell::VerifyCheck as ShellVerifyCheck;
 use crate::shell::VerifyCheckStatus as ShellVerifyCheckStatus;
@@ -77,6 +79,7 @@ use crate::shell::replay_latest_workflow as replay_shell_latest_workflow;
 use crate::shell::replay_workflow_from as replay_shell_workflow_from;
 use crate::shell::simulate_tool as simulate_shell_tool;
 use crate::shell::workflow_template as shell_workflow_template;
+use crate::status::RateLimitSnapshotDisplay;
 use crate::tui;
 use crate::tui::TuiEvent;
 use crate::update_action::UpdateAction;
@@ -128,6 +131,8 @@ use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Wrap;
+use serde::Deserialize;
+use serde::Serialize;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -151,12 +156,6 @@ use toml::Value as TomlValue;
 
 const EXTERNAL_EDITOR_HINT: &str = "Save and close external editor to continue.";
 const THREAD_EVENT_CHANNEL_CAPACITY: usize = 32768;
-const SHELL_TOP_BAR_HEIGHT: u16 = 3;
-const SHELL_TAB_HEIGHT: u16 = 3;
-const SHELL_OVERVIEW_HEIGHT: u16 = 4;
-const SHELL_ACTION_BAR_HEIGHT: u16 = 3;
-const SHELL_MIN_CHAT_HEIGHT: u16 = 6;
-
 fn parse_env_bool(value: &str) -> bool {
     matches!(
         value.trim().to_ascii_lowercase().as_str(),
@@ -185,11 +184,65 @@ fn aeye_shell_persistence_enabled() -> bool {
         .is_none_or(|v| parse_env_bool(&v))
 }
 
+fn aeye_shell_keymap_override() -> Option<String> {
+    std::env::var("A_EYE_SHELL_KEYMAP").ok()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ShellUiPrefs {
+    onboarding_seen: bool,
+    keymap_preset: String,
+}
+
+impl Default for ShellUiPrefs {
+    fn default() -> Self {
+        let keymap_preset = if cfg!(target_os = "macos") {
+            "mac"
+        } else {
+            "standard"
+        };
+        Self {
+            onboarding_seen: false,
+            keymap_preset: keymap_preset.to_string(),
+        }
+    }
+}
+
+fn shell_ui_prefs_path(codex_home: &Path) -> PathBuf {
+    codex_home.join("shell").join("ui-preferences.json")
+}
+
+fn load_shell_ui_prefs(codex_home: &Path) -> ShellUiPrefs {
+    let path = shell_ui_prefs_path(codex_home);
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return ShellUiPrefs::default();
+    };
+    serde_json::from_str(&raw).unwrap_or_else(|_| ShellUiPrefs::default())
+}
+
+fn save_shell_ui_prefs(codex_home: &Path, prefs: &ShellUiPrefs) -> Result<()> {
+    let path = shell_ui_prefs_path(codex_home);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let raw = serde_json::to_string_pretty(prefs)?;
+    std::fs::write(path, raw)?;
+    Ok(())
+}
+
 fn project_name_for_shell(cwd: &Path) -> String {
     cwd.file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| cwd.display().to_string())
+}
+
+fn shell_keymap_preset_from_label(label: &str) -> crate::shell::KeymapPreset {
+    match label.trim().to_ascii_lowercase().as_str() {
+        "mac" => crate::shell::KeymapPreset::Mac,
+        "windows" => crate::shell::KeymapPreset::Windows,
+        _ => crate::shell::KeymapPreset::Standard,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1199,7 +1252,22 @@ impl App {
         let shell = if aeye_shell_v1_enabled() {
             let personality = config.personality.unwrap_or(Personality::Friendly);
             let project_name = project_name_for_shell(config.cwd.as_path());
-            Some(Shell::new(ShellState::new(project_name, personality)))
+            let mut shell = Shell::new(ShellState::new(project_name, personality));
+            let mut prefs = load_shell_ui_prefs(config.codex_home.as_path());
+            if let Some(override_keymap) = aeye_shell_keymap_override() {
+                prefs.keymap_preset = override_keymap;
+            }
+            shell.dispatch(ShellAction::Runtime(ShellRuntimeAction::SetKeymapPreset(
+                shell_keymap_preset_from_label(&prefs.keymap_preset),
+            )));
+            if !prefs.onboarding_seen {
+                shell.dispatch(ShellAction::User(crate::shell::UserAction::ShowOnboarding));
+                prefs.onboarding_seen = true;
+                if let Err(err) = save_shell_ui_prefs(config.codex_home.as_path(), &prefs) {
+                    tracing::warn!(error = %err, "failed to persist shell ui preferences");
+                }
+            }
+            Some(shell)
         } else {
             None
         };
@@ -1436,12 +1504,9 @@ impl App {
                     let terminal_size = tui.terminal.size()?;
                     if self.shell.is_some() {
                         self.sync_shell_runtime();
-                        // Phase 1 shell intentionally preserves inline viewport semantics.
-                        let draw_height = Self::shell_draw_height(
-                            terminal_size.height,
-                            self.chat_widget.desired_height(terminal_size.width),
-                        );
-                        tui.draw(draw_height, |frame| {
+                        // Render shell in a full-height viewport so we don't stack
+                        // repeated shell chrome lines in terminal scrollback.
+                        tui.draw(terminal_size.height, |frame| {
                             if let Some(shell) = self.shell.as_ref() {
                                 let render =
                                     shell.render(frame.area(), frame.buffer, &self.chat_widget);
@@ -2727,6 +2792,12 @@ impl App {
         let personality = widget_config.personality.unwrap_or(Personality::Friendly);
         let collab_label = Self::collaboration_mode_label(&self.chat_widget);
         let model = self.chat_widget.current_model().to_string();
+        let insights = self.chat_widget.shell_insights();
+        let usage = Self::shell_usage_snapshot(
+            insights.context_remaining_percent,
+            insights.total_tokens,
+            self.chat_widget.rate_limit_snapshot(),
+        );
         let policy_tier = Self::shell_policy_tier(
             *widget_config.approval_policy.get(),
             widget_config.sandbox_policy.get(),
@@ -2739,6 +2810,7 @@ impl App {
             ShellRuntimeAction::SetSafetyMode(safety_mode),
             ShellRuntimeAction::SetPolicyTier(policy_tier),
             ShellRuntimeAction::SetRiskLevel(risk),
+            ShellRuntimeAction::SetUsage(usage),
             ShellRuntimeAction::SetPersonality(personality),
             ShellRuntimeAction::SetCollaborationModeLabel(collab_label),
             ShellRuntimeAction::SetModelSlug(Some(model)),
@@ -2775,6 +2847,52 @@ impl App {
                 }
             }
         }
+    }
+
+    fn shell_usage_snapshot(
+        context_remaining_percent: Option<i64>,
+        total_tokens: Option<i64>,
+        rate_limits: Option<&RateLimitSnapshotDisplay>,
+    ) -> ShellUsageSnapshot {
+        let mut usage = ShellUsageSnapshot {
+            context_remaining_percent,
+            total_tokens,
+            ..ShellUsageSnapshot::default()
+        };
+
+        if let Some(primary) = rate_limits.and_then(|snapshot| snapshot.primary.as_ref()) {
+            usage.primary_window_label = primary
+                .window_minutes
+                .map(get_limits_duration)
+                .map(Arc::<str>::from);
+            usage.primary_remaining_percent =
+                Some((100.0_f64 - primary.used_percent).round().clamp(0.0, 100.0) as u8);
+        }
+        if let Some(secondary) = rate_limits.and_then(|snapshot| snapshot.secondary.as_ref()) {
+            usage.secondary_window_label = secondary
+                .window_minutes
+                .map(get_limits_duration)
+                .map(Arc::<str>::from);
+            usage.secondary_remaining_percent = Some(
+                (100.0_f64 - secondary.used_percent)
+                    .round()
+                    .clamp(0.0, 100.0) as u8,
+            );
+        }
+        if let Some(credits) = rate_limits.and_then(|snapshot| snapshot.credits.as_ref()) {
+            usage.credits_label = if !credits.has_credits {
+                None
+            } else if credits.unlimited {
+                Some(Arc::<str>::from("unlimited"))
+            } else {
+                credits
+                    .balance
+                    .as_ref()
+                    .map(|balance| Arc::<str>::from(balance.clone()))
+            };
+        }
+
+        usage
     }
 
     fn current_shell_run_id(&self) -> u64 {
@@ -3610,16 +3728,6 @@ impl App {
         true
     }
 
-    fn shell_draw_height(terminal_height: u16, chat_desired_height: u16) -> u16 {
-        let desired_chat = chat_desired_height.max(SHELL_MIN_CHAT_HEIGHT);
-        let desired_shell_height = SHELL_TOP_BAR_HEIGHT
-            + SHELL_TAB_HEIGHT
-            + SHELL_OVERVIEW_HEIGHT
-            + desired_chat
-            + SHELL_ACTION_BAR_HEIGHT;
-        desired_shell_height.min(terminal_height)
-    }
-
     fn handle_active_thread_event(&mut self, tui: &mut tui::Tui, event: Event) -> Result<()> {
         self.handle_codex_event_now(event);
         if self.backtrack_render_pending {
@@ -3793,6 +3901,22 @@ impl App {
     async fn handle_key_event(&mut self, tui: &mut tui::Tui, key_event: KeyEvent) {
         match key_event {
             KeyEvent {
+                code: KeyCode::Char('l'),
+                modifiers: crossterm::event::KeyModifiers::CONTROL,
+                kind: KeyEventKind::Press,
+                ..
+            } => {
+                if let Err(err) = tui.terminal.clear_scrollback() {
+                    tracing::warn!(%err, "failed to clear terminal scrollback");
+                }
+                if let Err(err) = tui.terminal.clear() {
+                    tracing::warn!(%err, "failed to clear terminal viewport");
+                }
+                self.deferred_history_lines.clear();
+                self.has_emitted_history_lines = false;
+                tui.frame_requester().schedule_frame();
+            }
+            KeyEvent {
                 code: KeyCode::Char('t'),
                 modifiers: crossterm::event::KeyModifiers::CONTROL,
                 kind: KeyEventKind::Press,
@@ -3950,15 +4074,18 @@ mod tests {
     }
 
     #[test]
-    fn shell_draw_height_respects_min_chat_height() {
-        let height = App::shell_draw_height(80, 2);
-        assert_eq!(height, 19);
-    }
-
-    #[test]
-    fn shell_draw_height_clamps_to_terminal_height() {
-        let height = App::shell_draw_height(16, 40);
-        assert_eq!(height, 16);
+    fn shell_ui_prefs_round_trip() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let codex_home = temp_dir.path();
+        let prefs = ShellUiPrefs {
+            onboarding_seen: true,
+            keymap_preset: "mac".to_string(),
+        };
+        save_shell_ui_prefs(codex_home, &prefs)?;
+        let loaded = load_shell_ui_prefs(codex_home);
+        assert_eq!(loaded.onboarding_seen, true);
+        assert_eq!(loaded.keymap_preset, "mac");
+        Ok(())
     }
 
     #[tokio::test]
