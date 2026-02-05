@@ -17,7 +17,7 @@ pub(crate) struct ShellLayout {
 
 pub(crate) fn compute(area: Rect, customization: &ShellCustomization) -> ShellLayout {
     let top_bar_height = 3_u16.min(area.height);
-    let action_bar_height = if customization.show_action_bar && area.height >= 14 {
+    let action_bar_height = if customization.show_action_bar && area.height >= 16 {
         3
     } else {
         0
@@ -33,59 +33,51 @@ pub(crate) fn compute(area: Rect, customization: &ShellCustomization) -> ShellLa
         .split(area);
 
     let middle = rows[1];
-    let show_journey = customization.show_journey && middle.width >= 86 && middle.height >= 10;
-    let journey_width = (middle.width / 3).clamp(24, 32);
+    let middle_rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(1)])
+        .split(middle);
+
+    let content = middle_rows[1];
+    let show_journey = customization.show_journey && content.width >= 130 && content.height >= 10;
+    let journey_width = (content.width / 4).clamp(22, 28);
     let cols = if show_journey {
         Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(journey_width), Constraint::Min(20)])
-            .split(middle)
+            .split(content)
     } else {
         Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(0), Constraint::Min(20)])
-            .split(middle)
+            .split(content)
     };
 
     let right = cols[1];
-    let min_chat_height = 6_u16;
-    let available_after_tabs = right.height.saturating_sub(3);
-    let show_overview = customization.show_overview
-        && available_after_tabs > min_chat_height + 2
-        && right.height >= 12;
-    let overview_height = if show_overview {
-        available_after_tabs
-            .saturating_sub(min_chat_height)
-            .clamp(3, 6)
+    let show_overview = customization.show_overview && right.width >= 100 && right.height >= 8;
+    let inspector_width = if show_overview {
+        (right.width / 3).clamp(28, 44)
     } else {
         0
     };
-    let right_rows = if show_overview {
+    let right_cols = if show_overview {
         Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3),
-                Constraint::Length(overview_height),
-                Constraint::Min(min_chat_height),
-            ])
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Min(40), Constraint::Length(inspector_width)])
             .split(right)
     } else {
         Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3),
-                Constraint::Length(0),
-                Constraint::Min(min_chat_height),
-            ])
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Min(20), Constraint::Length(0)])
             .split(right)
     };
 
     ShellLayout {
         top_bar: rows[0],
         journey: cols[0],
-        tabs: right_rows[0],
-        overview: right_rows[1],
-        chat: right_rows[2],
+        tabs: middle_rows[0],
+        overview: right_cols[1],
+        chat: right_cols[0],
         action_bar: if customization.show_action_bar {
             rows[2]
         } else {

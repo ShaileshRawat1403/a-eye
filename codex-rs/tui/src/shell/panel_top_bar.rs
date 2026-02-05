@@ -15,38 +15,16 @@ pub(crate) fn render(area: Rect, buffer: &mut Buffer, state: &ShellState) {
     let usage = usage_summary(state);
     let line = Line::from(vec![
         "A-Eye".bold().fg(accent),
-        " | Project: ".dim(),
+        " | ".dim(),
         state.header.project_name.as_ref().into(),
-        " | Mode: ".dim(),
+        " | mode ".dim(),
         state.header.safety_mode.label().into(),
-        " | Scan: ".dim(),
-        state.header.scan.label().into(),
-        " | Apply: ".dim(),
-        state.header.apply.label().into(),
-        " | Verify: ".dim(),
-        state.header.verify.label().into(),
-        " | Risk: ".dim(),
+        " | risk ".dim(),
         state.header.risk.label().into(),
-        " | Journey: ".dim(),
+        " | step ".dim(),
         state.journey_status.state.label().into(),
-        " | Theme: ".dim(),
-        state.customization.theme.label().into(),
-        " | Keys: ".dim(),
-        state.customization.keymap_preset.label().into(),
-        " | Intent: ".dim(),
-        if state.customization.auto_follow_intent {
-            "auto".green()
-        } else {
-            "manual".magenta()
-        },
-        " | Usage: ".dim(),
+        " | usage ".dim(),
         usage.into(),
-        " | SME: ".dim(),
-        format!(
-            "{} • {} • {}",
-            state.sm.personality, state.sm.skills_enabled_count, state.sm.collaboration_mode_label,
-        )
-        .into(),
     ]);
 
     Paragraph::new(line)

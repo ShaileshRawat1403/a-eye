@@ -411,9 +411,12 @@ impl Shell {
         panel_action_bar::render(layout.action_bar, buffer, &self.state);
         if matches!(self.state.routing.tab, ShellTab::Chat) {
             panel_chat_adapter::render(chat_widget, chat_focus_area, buffer);
-        } else {
+        } else if layout.overview.width > 0 && layout.overview.height > 0 {
             panel_overview::render(layout.overview, buffer, &self.state);
             panel_chat_adapter::render(chat_widget, layout.chat, buffer);
+        } else {
+            // Narrow terminals fall back to focused artifact view so tabs stay functional.
+            panel_overview::render(layout.chat, buffer, &self.state);
         }
 
         let overlay_active = !matches!(self.state.interaction.overlay, ShellOverlay::None);

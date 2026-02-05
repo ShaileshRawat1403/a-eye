@@ -4,8 +4,8 @@ expression: snapshot
 ---
 area=(0,0 120x32)
 top=(0,0 120x3)
-journey=(0,3 32x26)
-tabs=(32,3 88x3)
-overview=(32,6 88x6)
-chat=(32,12 88x17)
+journey=(0,6 0x23)
+tabs=(0,3 120x3)
+overview=(80,6 40x23)
+chat=(0,6 80x23)
 action=(0,29 120x3)

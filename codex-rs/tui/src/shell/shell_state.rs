@@ -964,9 +964,9 @@ impl ShellState {
                 } else {
                     KeymapPreset::Standard
                 },
-                show_journey: true,
-                show_overview: false,
-                show_action_bar: true,
+                show_journey: false,
+                show_overview: true,
+                show_action_bar: false,
                 auto_follow_intent: false,
             },
             sm: SubjectMatterState {
