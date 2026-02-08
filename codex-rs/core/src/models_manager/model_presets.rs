@@ -96,6 +96,32 @@ static PRESETS: Lazy<Vec<ModelPreset>> = Lazy::new(|| {
             supported_in_api: true,
         },
         ModelPreset {
+            id: "phi3:mini-128k".to_string(),
+            model: "phi3:mini-128k".to_string(),
+            display_name: "phi3:mini-128k".to_string(),
+            description: "Phi-3 Mini 128k, a powerful small language model.".to_string(),
+            default_reasoning_effort: ReasoningEffort::Medium,
+            supported_reasoning_efforts: vec![
+                ReasoningEffortPreset {
+                    effort: ReasoningEffort::Low,
+                    description: "Fast responses with lighter reasoning".to_string(),
+                },
+                ReasoningEffortPreset {
+                    effort: ReasoningEffort::Medium,
+                    description: "Balances speed and reasoning depth for everyday tasks".to_string(),
+                },
+                ReasoningEffortPreset {
+                    effort: ReasoningEffort::High,
+                    description: "Greater reasoning depth for complex problems".to_string(),
+                },
+            ],
+            supports_personality: true,
+            is_default: false,
+            upgrade: None,
+            show_in_picker: true,
+            supported_in_api: true,
+        },
+        ModelPreset {
             id: "gpt-5.2".to_string(),
             model: "gpt-5.2".to_string(),
             display_name: "gpt-5.2".to_string(),
@@ -343,8 +369,12 @@ fn gpt_52_codex_upgrade() -> ModelUpgrade {
     }
 }
 
-pub(super) fn builtin_model_presets(_auth_mode: Option<AuthMode>) -> Vec<ModelPreset> {
-    PRESETS.iter().cloned().collect()
+pub(super) fn builtin_model_presets(auth_mode: Option<AuthMode>) -> Vec<ModelPreset> {
+    let mut presets: Vec<ModelPreset> = PRESETS.iter().cloned().collect();
+    if let Some(AuthMode::Chatgpt) = auth_mode {
+        presets.retain(|p| !p.model.starts_with("phi3"));
+    }
+    presets
 }
 
 #[cfg(any(test, feature = "test-support"))]

@@ -6,6 +6,8 @@
 
 A-Eye is a CLI-first, intent-driven software development agent designed for non-developers.
 
+It is the host product and user experience layer. Under the hood, A-Eye uses a deterministic orchestration model (i7) and engine components (DAO) to keep execution safe, auditable, and resumable.
+
 Core workflow:
 
 `Intent -> System Context -> Plan -> Explain -> Patch -> Verify -> Learn`
@@ -51,6 +53,55 @@ Then run:
 ```bash
 a-eye setup
 a-eye plan "describe your goal"
+```
+
+Run the TUI quickly from repo root:
+
+```bash
+just a-eye
+```
+
+## Deterministic Orchestration (i7 + DAO)
+
+A-Eye uses the **i7 framework** and DAO-style deterministic orchestration principles:
+
+- deterministic state transitions
+- artifact-first workflow execution
+- policy-gated approvals
+- replay and resume support for interrupted runs
+
+This makes A-Eye behavior inspectable and enterprise-auditable without changing the CLI-first experience.
+
+## How A-Eye and DAO Relate
+
+- **A-Eye** is the product users run (`a-eye`) and interact with via CLI/TUI.
+- **i7** is the orchestration framework: Intent, Inspect, Interpret, Isolate, Implement, Verify, Integrate.
+- **DAO** is the deterministic orchestration engine layer used to operationalize i7 concepts.
+
+In short: A-Eye is the interface, i7 is the model, DAO is the execution engine.
+
+## Architecture Docs
+
+- i7 framework overview: `docs/i7-framework.md`
+- i7 to DAO implementation mapping: `docs/i7-to-dao-mapping.md`
+
+## Operational Guarantees
+
+A-Eye and its orchestration layer are designed around:
+
+- monotonic correlation IDs (`run_id`, `request_id`, `invocation_id`)
+- deterministic approval and policy transitions
+- append-only event history and snapshot-aware replay
+- explicit resume semantics (no implicit unsafe continuation)
+
+## Engine Commands (when DAO workspace is present)
+
+If you also have the extracted DAO workspace checked out, you can run engine-level flows directly:
+
+```bash
+dao run --repo .
+dao replay --last --repo .
+dao resume --repo .
 ```
 
 ## Launch Focus
