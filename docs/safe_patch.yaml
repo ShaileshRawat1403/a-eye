@@ -1,0 +1,19 @@
+name: Safe Patch
+description: "Generates and applies a patch with verification based on a user goal."
+steps:
+  - name: Scan System
+    action: system.scan
+  - name: Generate Plan
+    action: llm.plan
+    inputs:
+      goal: "{{ user.goal }}"
+  - name: Generate Patch
+    action: llm.patch
+  - name: Apply Patch
+    action: tools.apply
+    when: "tier >= 2"
+    inputs:
+      patch: "{{ steps.Generate Patch.outputs.patch_path }}"
+  - name: Run Verification
+    action: tools.verify
+    when: "tier >= 2"

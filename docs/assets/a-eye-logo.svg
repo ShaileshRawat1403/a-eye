@@ -1,0 +1,45 @@
+<svg width="960" height="260" viewBox="0 0 960 260" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">A-Eye Logo</title>
+  <desc id="desc">A nuanced eye mark with layered iris and signal arcs representing perception and intelligent guidance.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0E1726"/>
+      <stop offset="100%" stop-color="#14213D"/>
+    </linearGradient>
+    <radialGradient id="iris" cx="50%" cy="45%" r="65%">
+      <stop offset="0%" stop-color="#9FE8D8"/>
+      <stop offset="45%" stop-color="#57C7B2"/>
+      <stop offset="100%" stop-color="#2B7A78"/>
+    </radialGradient>
+    <radialGradient id="shine" cx="30%" cy="25%" r="50%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="2.5"/>
+    </filter>
+  </defs>
+
+  <rect width="960" height="260" rx="22" fill="url(#bg)"/>
+
+  <g transform="translate(110 130)">
+    <ellipse cx="130" cy="0" rx="125" ry="64" fill="none" stroke="#86BBD8" stroke-width="5"/>
+    <path d="M5,0 C40,-52 90,-78 130,-78 C170,-78 220,-52 255,0" fill="none" stroke="#BEE3F8" stroke-opacity="0.35" stroke-width="3"/>
+    <path d="M5,0 C40,52 90,78 130,78 C170,78 220,52 255,0" fill="none" stroke="#BEE3F8" stroke-opacity="0.25" stroke-width="3"/>
+
+    <circle cx="130" cy="0" r="45" fill="url(#iris)"/>
+    <circle cx="130" cy="0" r="19" fill="#0B1020"/>
+    <circle cx="142" cy="-14" r="16" fill="url(#shine)"/>
+
+    <path d="M102,-2 C110,-12 120,-17 130,-18 C140,-17 150,-12 158,-2" fill="none" stroke="#D6FFF6" stroke-opacity="0.55" stroke-width="2" filter="url(#soft)"/>
+
+    <path d="M278,-30 C318,-24 344,-8 366,10" fill="none" stroke="#5BC0BE" stroke-width="3" stroke-linecap="round"/>
+    <path d="M282,-2 C330,5 360,22 382,44" fill="none" stroke="#5BC0BE" stroke-opacity="0.7" stroke-width="2.8" stroke-linecap="round"/>
+    <path d="M276,-58 C308,-56 334,-46 354,-32" fill="none" stroke="#5BC0BE" stroke-opacity="0.45" stroke-width="2.3" stroke-linecap="round"/>
+  </g>
+
+  <g transform="translate(520 105)">
+    <text x="0" y="0" fill="#E6F4F1" font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, Helvetica, Arial" font-size="64" font-weight="700" letter-spacing="1.3">A-Eye</text>
+    <text x="0" y="46" fill="#9FC9D8" font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, Helvetica, Arial" font-size="20" letter-spacing="0.35">Intent-Driven CLI Agent for Non-Developers</text>
+  </g>
+</svg>

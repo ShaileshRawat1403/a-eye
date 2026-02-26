@@ -1,0 +1,159 @@
+[workspace]
+members = [
+    "aeye-absolute-path",
+    "aeye-ansi-escape",
+    "aeye-apply-patch",
+    "aeye-async-utils",
+    "aeye-cache",
+    "aeye-cargo-bin",
+    "aeye-file-search",
+    "aeye-git",
+    "aeye-home-dir",
+    "aeye-image",
+    "aeye-json-to-toml",
+    "aeye-keyring-store",
+    "aeye-mcp-types",
+    "aeye-protocol",
+    "aeye-pty",
+    "aeye-readiness",
+    "aeye-string",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+allocative = "0.3.3"
+ansi-to-tui = "7.0.0"
+anyhow = "1"
+assert_cmd = "2"
+assert_matches = "1.5.0"
+async-channel = "2.3.1"
+async-trait = "0.1.89"
+base64 = "0.22.1"
+bytes = "1.10.1"
+chardetng = "0.1.17"
+clap = "4"
+chrono = { version = "0.4.43", features = ["serde"] }
+crossbeam-channel = "0.5.15"
+dirs = "6"
+dunce = "1.0.4"
+encoding_rs = "0.8.35"
+futures = { version = "0.3", default-features = false }
+http = "1.3.1"
+icudata = "0.2"
+ignore = "0.4.23"
+icu_decimal = "2.1"
+icu_locale_core = "2.1"
+icu_provider = { version = "2.1", features = ["sync"] }
+image = { version = "^0.25.9", default-features = false }
+indoc = "2.0"
+itertools = "0.14.0"
+keyring = { version = "3.6", default-features = false }
+lazy_static = "1"
+libc = "0.2.177"
+log = "0.4"
+lru = "0.16.3"
+mime_guess = "2.0.5"
+multimap = "0.10.0"
+maplit = "1.0.2"
+nucleo = { git = "https://github.com/helix-editor/nucleo.git", rev = "4253de9faabb4e5c6d81d946a5e35a90f87347ee" }
+once_cell = "1.20.2"
+owo-colors = "4.2.0"
+path-absolutize = "3.1.1"
+pathdiff = "0.2"
+portable-pty = "0.9.0"
+predicates = "3"
+ratatui = "0.29.0"
+ratatui-macros = "0.6.0"
+pretty_assertions = "1.4.1"
+regex = "1.12.2"
+runfiles = { git = "https://github.com/dzbarsky/rules_rust", rev = "b56cbaa8465e74127f1ea216f813cd377295ad81" }
+schemars = "0.8.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_with = { version = "3.16", features = ["macros", "base64"] }
+shlex = "1.3.0"
+similar = "2.7.0"
+starlark = "0.13.0"
+strum = "0.27.2"
+strum_macros = "0.27.2"
+sys-locale = "0.3.2"
+sha1 = "0.10.6"
+sqlx = { version = "0.8.6", default-features = false, features = ["chrono", "json", "macros", "migrate", "runtime-tokio-rustls", "sqlite", "time", "uuid"] }
+tempfile = "3.23.0"
+thiserror = "2.0.17"
+time = { version = "0.3", features = ["formatting", "parsing"] }
+tokio-tungstenite = { version = "0.28.0", features = ["proxy", "rustls-tls-native-roots"] }
+tokio-util = "0.7.18"
+tree-sitter = "0.25.10"
+tree-sitter-bash = "0.25"
+tokio = { version = "1", features = ["full"] }
+toml = "0.9.5"
+tracing = "0.1.44"
+tracing-subscriber = "0.3.22"
+ts-rs = { version = "11", features = ["serde-json-impl", "no-serde-warnings", "uuid-impl"] }
+uuid = { version = "1", features = ["serde", "v4", "v5"] }
+walkdir = "2.5.0"
+which = "8"
+
+# Internal
+aeye-ansi-escape = { path = "aeye-ansi-escape" }
+aeye-apply-patch = { path = "aeye-apply-patch" }
+aeye-async-utils = { path = "aeye-async-utils" }
+aeye-execpolicy = { path = "aeye-execpolicy" }
+aeye-file-search = { path = "aeye-file-search" }
+aeye-keyring-store = { path = "aeye-keyring-store" }
+aeye-mcp-types = { path = "aeye-mcp-types" }
+aeye-protocol = { path = "aeye-protocol" }
+aeye-state = { path = "aeye-state" }
+aeye-utils-absolute-path = { path = "aeye-absolute-path" }
+aeye-utils-cache = { path = "aeye-cache" }
+aeye-utils-cargo-bin = { path = "aeye-cargo-bin" }
+aeye-git = { path = "aeye-git" }
+aeye-utils-home-dir = { path = "aeye-home-dir" }
+aeye-utils-image = { path = "aeye-image" }
+aeye-utils-json-to-toml = { path = "aeye-json-to-toml" }
+aeye-utils-pty = { path = "aeye-pty" }
+aeye-utils-readiness = { path = "aeye-readiness" }
+aeye-utils-string = { path = "aeye-string" }
+
+[workspace.lints]
+rust = {}
+
+[workspace.lints.clippy]
+expect_used = "deny"
+identity_op = "deny"
+manual_clamp = "deny"
+manual_filter = "deny"
+manual_find = "deny"
+manual_flatten = "deny"
+manual_map = "deny"
+manual_memcpy = "deny"
+manual_non_exhaustive = "deny"
+manual_ok_or = "deny"
+manual_range_contains = "deny"
+manual_retain = "deny"
+manual_strip = "deny"
+manual_try_fold = "deny"
+manual_unwrap_or = "deny"
+needless_borrow = "deny"
+needless_borrowed_reference = "deny"
+needless_collect = "deny"
+needless_late_init = "deny"
+needless_option_as_deref = "deny"
+needless_question_mark = "deny"
+needless_update = "deny"
+redundant_clone = "deny"
+redundant_closure = "deny"
+redundant_static_lifetimes = "deny"
+trivially_copy_pass_by_ref = "deny"
+uninlined_format_args = "deny"
+unnecessary_filter_map = "deny"
+unnecessary_lazy_evaluations = "deny"
+unnecessary_sort_by = "deny"
+unnecessary_to_owned = "deny"
+unwrap_used = "deny"
