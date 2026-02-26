@@ -1,0 +1,32 @@
+{"seq":1,"ts_ms":1770447880097,"kind":"workflow_run_started","run_id":1,"template_id":"scan_plan_diff_verify","execution_mode":"simulated","policy_tier":"balanced","persona_policy":{"tier_ceiling":"permissive","explanation_depth":"brief","output_format":"technical-first"}}
+{"seq":2,"ts_ms":1770447880097,"kind":"tool_invocation_issued","run_id":1,"invocation_id":1,"tool_id":"scan_repo"}
+{"seq":3,"ts_ms":1770447880098,"kind":"tool_result_recorded","run_id":1,"invocation_id":1,"tool_id":"scan_repo","status":"succeeded"}
+{"seq":4,"ts_ms":1770447880098,"kind":"workflow_status_changed","run_id":1,"status":"running","step_index":1,"reason":null}
+{"seq":5,"ts_ms":1770447880098,"kind":"tool_invocation_issued","run_id":1,"invocation_id":2,"tool_id":"generate_plan"}
+{"seq":6,"ts_ms":1770447880098,"kind":"tool_result_recorded","run_id":1,"invocation_id":2,"tool_id":"generate_plan","status":"succeeded"}
+{"seq":7,"ts_ms":1770447880098,"kind":"workflow_status_changed","run_id":1,"status":"running","step_index":2,"reason":null}
+{"seq":8,"ts_ms":1770447880098,"kind":"tool_invocation_issued","run_id":1,"invocation_id":3,"tool_id":"compute_diff"}
+{"seq":9,"ts_ms":1770447880098,"kind":"tool_result_recorded","run_id":1,"invocation_id":3,"tool_id":"compute_diff","status":"succeeded"}
+{"seq":10,"ts_ms":1770447880098,"kind":"workflow_status_changed","run_id":1,"status":"running","step_index":3,"reason":null}
+{"seq":11,"ts_ms":1770447880098,"kind":"approval_requested","request_id":"req-1-4","run_id":1,"invocation_id":4,"tool_id":"verify","risk":"execution","preview":"workflow tool verify"}
+{"seq":12,"ts_ms":1770447883524,"kind":"approval_resolved","request_id":"req-1-4","run_id":1,"decision":"approved"}
+{"seq":13,"ts_ms":1770447883525,"kind":"tool_invocation_issued","run_id":1,"invocation_id":4,"tool_id":"verify"}
+{"seq":14,"ts_ms":1770447883525,"kind":"tool_result_recorded","run_id":1,"invocation_id":4,"tool_id":"verify","status":"succeeded"}
+{"seq":15,"ts_ms":1770447883525,"kind":"workflow_status_changed","run_id":1,"status":"running","step_index":4,"reason":null}
+{"seq":16,"ts_ms":1770447883526,"kind":"workflow_status_changed","run_id":1,"status":"completed","step_index":4,"reason":null}
+{"seq":17,"ts_ms":1770448071941,"kind":"workflow_run_started","run_id":2,"template_id":"scan_plan_diff_verify","execution_mode":"simulated","policy_tier":"balanced","persona_policy":{"tier_ceiling":"permissive","explanation_depth":"brief","output_format":"technical-first"}}
+{"seq":18,"ts_ms":1770448071941,"kind":"tool_invocation_issued","run_id":2,"invocation_id":1,"tool_id":"scan_repo"}
+{"seq":19,"ts_ms":1770448071941,"kind":"tool_result_recorded","run_id":2,"invocation_id":1,"tool_id":"scan_repo","status":"succeeded"}
+{"seq":20,"ts_ms":1770448071941,"kind":"workflow_status_changed","run_id":2,"status":"running","step_index":1,"reason":null}
+{"seq":21,"ts_ms":1770448071941,"kind":"tool_invocation_issued","run_id":2,"invocation_id":2,"tool_id":"generate_plan"}
+{"seq":22,"ts_ms":1770448071941,"kind":"tool_result_recorded","run_id":2,"invocation_id":2,"tool_id":"generate_plan","status":"succeeded"}
+{"seq":23,"ts_ms":1770448071941,"kind":"workflow_status_changed","run_id":2,"status":"running","step_index":2,"reason":null}
+{"seq":24,"ts_ms":1770448071942,"kind":"tool_invocation_issued","run_id":2,"invocation_id":3,"tool_id":"compute_diff"}
+{"seq":25,"ts_ms":1770448071942,"kind":"tool_result_recorded","run_id":2,"invocation_id":3,"tool_id":"compute_diff","status":"succeeded"}
+{"seq":26,"ts_ms":1770448071942,"kind":"workflow_status_changed","run_id":2,"status":"running","step_index":3,"reason":null}
+{"seq":27,"ts_ms":1770448071942,"kind":"approval_requested","request_id":"req-2-4","run_id":2,"invocation_id":4,"tool_id":"verify","risk":"execution","preview":"workflow tool verify"}
+{"seq":28,"ts_ms":1770448074364,"kind":"approval_resolved","request_id":"req-2-4","run_id":2,"decision":"approved"}
+{"seq":29,"ts_ms":1770448074366,"kind":"tool_invocation_issued","run_id":2,"invocation_id":4,"tool_id":"verify"}
+{"seq":30,"ts_ms":1770448074366,"kind":"tool_result_recorded","run_id":2,"invocation_id":4,"tool_id":"verify","status":"succeeded"}
+{"seq":31,"ts_ms":1770448074366,"kind":"workflow_status_changed","run_id":2,"status":"running","step_index":4,"reason":null}
+{"seq":32,"ts_ms":1770448074367,"kind":"workflow_status_changed","run_id":2,"status":"completed","step_index":4,"reason":null}
