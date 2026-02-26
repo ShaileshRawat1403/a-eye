@@ -3,11 +3,9 @@ def _rbe_platform_repo_impl(rctx):
     if arch in ["x86_64", "amd64"]:
         cpu = "x86_64"
         exec_arch = "amd64"
-        image_sha = "8c9ff94187ea7c08a31e9a81f5fe8046ea3972a6768983c955c4079fa30567fb"
     elif arch in ["aarch64", "arm64"]:
         cpu = "aarch64"
         exec_arch = "arm64"
-        image_sha = "ad9506086215fccfc66ed8d2be87847324be56790ae6a1964c241c28b77ef141"
     else:
         fail("Unsupported host arch for rbe platform: {}".format(arch))
 
@@ -23,8 +21,9 @@ platform(
     exec_properties = {{
         # Ubuntu-based image that includes git, python3, dotslash, and other
         # tools that various integration tests need.
-        # Verify at https://hub.docker.com/layers/mbolin491/codex-bazel/latest/images/sha256:{image_sha}
-        "container-image": "docker://docker.io/mbolin491/codex-bazel@sha256:{image_sha}",
+        # Temporary placeholder until the aeye image is published with a pinned digest.
+        # Replace this with: docker://ghcr.io/shaileshrawat1403/aeye-bazel@sha256:<digest>
+        "container-image": "docker://ghcr.io/shaileshrawat1403/aeye-bazel:bootstrap",
         "Arch": "{arch}",
         "OSFamily": "Linux",
     }},
@@ -32,8 +31,7 @@ platform(
 )
 """.format(
     cpu = cpu,
-    arch = exec_arch,
-    image_sha = image_sha
+    arch = exec_arch
 ))
 
 rbe_platform_repository = repository_rule(
