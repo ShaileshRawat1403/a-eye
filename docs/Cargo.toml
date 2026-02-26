@@ -21,8 +21,8 @@ uuid = { version = "1.4", features = ["v4"] }
 walkdir = "2"
 
 # Dependencies for the learner module
-codex-core = { path = "../aeye-rs/core" }
-codex-otel = { path = "../aeye-rs/otel" }
-codex-protocol = { path = "../aeye-rs/protocol" }
+aeye-core = { path = "../aeye-rs/core" }
+
+aeye-protocol = { path = "../aeye-utils/aeye-protocol" }
 futures = "0.3"
 tokio = { version = "1", features = ["full"] }
